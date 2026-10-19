@@ -1,0 +1,8 @@
+{
+  "name": "Aura IA",
+  "description": "Un acompañante digital personal basado en IA con memoria a largo plazo, registro emocional y análisis de patrones.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
