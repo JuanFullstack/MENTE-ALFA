@@ -114,8 +114,14 @@ export default function MemoriaView({
     setEditingSummary(m.summary || "");
   };
 
-  // Save edited note (Update)
+  // Save edited note (Update) - Bloquea re-compresión sobre Fichas Inmutables (Fase 1)
   const handleSaveEdit = async (id: string) => {
+    if (id.startsWith("VIV-")) {
+      setSyncToast("Protección Fase 1: Las Fichas Inmutables (VIV-*) son de solo lectura permanente.");
+      setEditingMemoryId(null);
+      setTimeout(() => setSyncToast(null), 3500);
+      return;
+    }
     if (!editingText.trim()) return;
     const summaryVal = editingSummary.trim() || undefined;
     const updated = memories.map((m) => {
@@ -139,8 +145,13 @@ export default function MemoriaView({
     setTimeout(() => setSyncToast(null), 2500);
   };
 
-  // Summarize an individual mental note with AI (non-repetitive)
+  // Summarize an individual mental note with AI -> Protege Fichas Inmutables contra re-compresión
   const handleSummarizeNote = async (mem: Memory) => {
+    if (mem.isImmutable || mem.id.startsWith("VIV-")) {
+      setSyncToast("Protección Fase 1: Ficha Inmutable protegida contra re-compresión recursiva.");
+      setTimeout(() => setSyncToast(null), 3500);
+      return;
+    }
     setSummarizingMemId(mem.id);
     try {
       const existingOtherNotes = memories.filter((m) => m.id !== mem.id);
@@ -327,15 +338,12 @@ export default function MemoriaView({
   });
 
   const categoriesList = [
-    { id: "todos", label: "Todos" },
-    { id: "general", label: "General" },
-    { id: "experiencias", label: "Experiencias" },
-    { id: "preferencias", label: "Preferencias" },
-    { id: "hábitos", label: "Hábitos" },
-    { id: "objetivos", label: "Objetivos" },
-    { id: "creencias", label: "Creencias" },
+    { id: "todos", label: "Todas las Ramas" },
+    { id: "proyectos", label: "Rama: Proyectos / Código" },
+    { id: "vinculos", label: "Rama: Vínculos / Personas" },
+    { id: "habitos", label: "Rama: Hábitos / Energía" },
+    { id: "experiencias", label: "Experiencias (Legado)" },
     { id: "estrategias", label: "Estrategias" },
-    { id: "valores", label: "Valores" },
   ];
 
   return (

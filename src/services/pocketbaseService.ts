@@ -13,6 +13,7 @@ import {
   AnalysisMetadata 
 } from "../types";
 import { UserProfile } from "../lib/storage";
+import { asegurarFichaInmutable } from "../lib/baseContext";
 
 export const POCKETBASE_URL = "http://167.234.243.247:8090";
 
@@ -233,7 +234,9 @@ export async function deleteMensajesByConvPB(conversationId: string): Promise<bo
 
 /**
  * ============================================================================
- * 3. NOTAS MENTALES / MEMORIAS (mentealfa_memorias)
+ * 3. FICHAS DE VIVENCIAS INMUTABLES (mentealfa_memorias)
+ * Fase 1: Cada ficha guardada es de solo lectura permanente, conservando
+ * intactos el detonante, contexto situacional, sesgo, acción y resultado.
  * ============================================================================
  */
 export async function fetchMemoriasPB(): Promise<Memory[]> {
@@ -251,14 +254,24 @@ export async function fetchMemoriasPB(): Promise<Memory[]> {
     const data = await res.json();
     const items = data.items || [];
 
-    return items.map((item: any) => ({
-      id: item.memId || item.id,
-      text: item.text || "",
-      category: item.category || "general",
-      createdAt: item.created || new Date().toISOString(),
-      isApproved: item.isApproved !== false,
-      summary: item.summary || undefined,
-    }));
+    return items.map((item: any, idx: number) => {
+      const baseMem: Memory = {
+        id: item.memId || item.id,
+        text: item.text || "",
+        category: item.category || "proyectos",
+        createdAt: item.created || new Date().toISOString(),
+        isApproved: item.isApproved !== false,
+        summary: item.summary || undefined,
+      };
+      const ficha = asegurarFichaInmutable(baseMem, idx + 1);
+      return {
+        ...baseMem,
+        fichaInmutable: ficha,
+        rama_id: ficha.rama_id,
+        tags_mecanismo: ficha.tags_mecanismo,
+        isImmutable: true,
+      };
+    });
   } catch (error) {
     console.warn("[PocketBase] Error al conectar con memorias:", error);
     return [];
@@ -267,15 +280,18 @@ export async function fetchMemoriasPB(): Promise<Memory[]> {
 
 export async function createMemoriaPB(memory: Memory): Promise<{ success: boolean; id?: string }> {
   try {
+    const ficha = asegurarFichaInmutable(memory, 1);
+    const serializedFicha = JSON.stringify(ficha);
+
     const res = await fetch(`${POCKETBASE_URL}/api/collections/mentealfa_memorias/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        memId: memory.id,
+        memId: ficha.id,
         text: memory.text,
-        category: memory.category,
+        category: ficha.rama_id,
         isApproved: memory.isApproved !== false,
-        summary: memory.summary || "",
+        summary: serializedFicha,
       }),
     });
 
@@ -291,7 +307,16 @@ export async function createMemoriaPB(memory: Memory): Promise<{ success: boolea
   }
 }
 
+/**
+ * Fase 1: Bloqueo de re-compresión sobre Fichas Inmutables.
+ * Si una ficha ya es inmutable (VIV-*), se rechaza cualquier sobrescritura destructiva
+ * sobre su texto o resumen original.
+ */
 export async function updateMemoriaPB(memId: string, text: string, category?: string, summary?: string): Promise<boolean> {
+  if (memId.startsWith("VIV-")) {
+    console.warn(`[Fase 1 - Protección Inmutable] La ficha ${memId} es de solo lectura permanente. Se bloqueó la re-compresión.`);
+    return false;
+  }
   try {
     const checkRes = await fetch(
       `${POCKETBASE_URL}/api/collections/mentealfa_memorias/records?filter=(memId='${memId}')`,
@@ -442,7 +467,7 @@ export async function deleteRegistroPB(logId: string): Promise<boolean> {
 
 /**
  * ============================================================================
- * 5. PATRONES CONDUCTUALES (mentealfa_patrones)
+ * 5. NODOS DE PATRONES POR PUNTEROS (mentealfa_patrones)
  * ============================================================================
  */
 export async function fetchPatronesPB(): Promise<Pattern[]> {

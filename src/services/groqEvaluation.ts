@@ -3,13 +3,16 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { FichaVivenciaInmutable, RamaTematica } from "../types";
+import { detectarRamaYTags } from "../lib/baseContext";
+
 export const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export const GROQ_MODELS = [
   {
     id: "llama-3.3-70b-versatile",
     name: "Llama 3.3 70B Versatile",
-    description: "Recomendado. Máxima potencia, razonamiento confrontativo, adherencia a marcos y respuestas directas sin clichés.",
+    description: "Recomendado para Consejo Táctico. Razonamiento contrastivo, adherencia a fichas inmutables y cero clichés.",
     recommended: true,
   },
   {
@@ -21,12 +24,13 @@ export const GROQ_MODELS = [
   {
     id: "llama-3.1-8b-instant",
     name: "Llama 3.1 8B Instant",
-    description: "Ultra-rápido. Tareas breves, resúmenes ágiles y clasificación.",
+    description: "Pipeline Asíncrono de Extracción. Ultra-rápido y económico para destilar las 5 variables de vivencias.",
     recommended: false,
   },
 ];
 
 export const PRIMARY_GROQ_MODEL = "llama-3.3-70b-versatile";
+export const EXTRACTION_GROQ_MODEL = "llama-3.1-8b-instant";
 export const FALLBACK_GROQ_MODEL = "llama-3.1-8b-instant";
 export const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 const DEFAULT_GROQ_API_KEY = "";
@@ -142,6 +146,7 @@ export interface GroqRequestOptions {
   temperature?: number;
   max_tokens?: number;
   jsonMode?: boolean;
+  assistantPrefill?: string;
 }
 
 /**
@@ -154,7 +159,6 @@ export async function testGroqKey(apiKey: string): Promise<{ success: boolean; m
 
   const trimmedKey = apiKey.trim();
 
-  // 1. Intentar prueba a través de endpoint proxy del servidor
   try {
     const srvRes = await fetch("/api/groq/test", {
       method: "POST",
@@ -170,10 +174,9 @@ export async function testGroqKey(apiKey: string): Promise<{ success: boolean; m
       return { success: false, message: srvData.message };
     }
   } catch {
-    // Si falla el servidor local, intentar llamada directa a la API de Groq
+    // Fallback a llamada directa
   }
 
-  // 2. Llamada directa a Groq Cloud API
   try {
     const response = await fetch(GROQ_API_URL, {
       method: "POST",
@@ -214,24 +217,24 @@ export async function testGroqKey(apiKey: string): Promise<{ success: boolean; m
   }
 }
 
-
 /**
- * Limpia bloques de pensamiento <think>...</think> si el modelo de razonamiento los incluye,
- * incluso si el bloque quedó truncado sin etiqueta de cierre.
+ * Limpia bloques de pensamiento <think>...</think> si el modelo de razonamiento los incluye.
  */
 export function cleanModelOutput(text: string): string {
-  if (!text) return '';
-  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-  if (cleaned.includes('<think>')) {
-    cleaned = cleaned.replace(/<think>[\s\S]*/gi, '').trim();
+  if (!text) return "";
+  let cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  if (cleaned.includes("<think>")) {
+    cleaned = cleaned.replace(/<think>[\s\S]*/gi, "").trim();
   }
-  cleaned = cleaned.replace(/<\/think>/gi, '').trim();
+  cleaned = cleaned.replace(/<\/think>/gi, "").trim();
   return cleaned;
 }
 
 /**
- * Envía una consulta conversacional a Groq AI (LPU Inference).
- * Conmuta automáticamente al modelo de respaldo si el principal no responde.
+ * FASE 3 & FASE 4: Envía consulta a Groq AI con:
+ * - Temperatura reducida por defecto (0.25, rango 0.2-0.3) para apego estricto a datos.
+ * - Poda de ventana activa (últimas 5 interacciones del hilo) para <1.000 tokens.
+ * - Soporte de Prefill del Asistente (`assistantPrefill`) para iniciar directo en `<analisis_contextual>`.
  */
 export async function chatWithGroq(
   messages: GroqChatMessage[],
@@ -240,19 +243,28 @@ export async function chatWithGroq(
   const apiKey = options.apiKey || getStoredGroqApiKey();
   const primaryModel = options.model || getStoredGroqModel() || PRIMARY_GROQ_MODEL;
   const fallbackModel = primaryModel === PRIMARY_GROQ_MODEL ? FALLBACK_GROQ_MODEL : PRIMARY_GROQ_MODEL;
-  const temperature = options.temperature ?? 0.3;
-  const maxTokens = options.max_tokens ?? 1200;
+  // Fase 4: Fijar temperatura entre 0.2 y 0.3 (0.25 por defecto)
+  const temperature = options.temperature ?? 0.25;
+  const maxTokens = options.max_tokens ?? 900;
 
   if (!apiKey) {
     throw new Error("No se ha configurado la clave API de Groq (GROQ_API_KEY).");
   }
 
-  // Optimización de tokens para respetar límites TPM
-  let optimizedMessages = messages;
-  if (messages.length > 7) {
-    const sysMsg = messages.find(m => m.role === 'system');
-    const recentMessages = messages.filter(m => m.role !== 'system').slice(-6);
+  // Poda del hilo activo: mantener System Prompt + últimas 5 interacciones
+  let optimizedMessages = [...messages];
+  if (optimizedMessages.length > 6) {
+    const sysMsg = optimizedMessages.find((m) => m.role === "system");
+    const recentMessages = optimizedMessages.filter((m) => m.role !== "system").slice(-5);
     optimizedMessages = sysMsg ? [sysMsg, ...recentMessages] : recentMessages;
+  }
+
+  // Fase 3: Inyección de Prefill del Asistente si no es jsonMode
+  if (options.assistantPrefill && !options.jsonMode) {
+    optimizedMessages = [
+      ...optimizedMessages,
+      { role: "assistant", content: options.assistantPrefill },
+    ];
   }
 
   const doRequest = async (modelToUse: string) => {
@@ -293,23 +305,25 @@ export async function chatWithGroq(
     }
 
     const data = await response.json();
-    return data.choices?.[0]?.message?.content || "";
+    const rawContent = data.choices?.[0]?.message?.content || "";
+    const cleaned = cleanModelOutput(rawContent);
+
+    if (options.assistantPrefill && !options.jsonMode && cleaned && !cleaned.startsWith("<analisis_contextual>")) {
+      return `${options.assistantPrefill} ${cleaned}`;
+    }
+    return cleaned;
   };
 
-  // 1. Intentar con el modelo principal
   try {
-    const raw = await doRequest(primaryModel);
-    const cleaned = cleanModelOutput(raw);
-    if (cleaned.length > 0) return cleaned;
+    const out = await doRequest(primaryModel);
+    if (out.length > 0) return out;
     throw new Error(`El modelo (${primaryModel}) devolvió una respuesta vacía.`);
   } catch (primaryErr: any) {
     console.warn(`[Groq AI] Falló modelo ${primaryModel}. Conmutando a respaldo (${fallbackModel})...`, primaryErr);
 
-    // 2. Fallback al modelo secundario
     try {
-      const fallbackRaw = await doRequest(fallbackModel);
-      const fallbackCleaned = cleanModelOutput(fallbackRaw);
-      if (fallbackCleaned.length > 0) return fallbackCleaned;
+      const fallbackOut = await doRequest(fallbackModel);
+      if (fallbackOut.length > 0) return fallbackOut;
       throw new Error(`El modelo de respaldo (${fallbackModel}) devolvió respuesta vacía.`);
     } catch (fallbackErr: any) {
       console.error(`[Groq AI] Error crítico en ambos modelos (${primaryModel} y ${fallbackModel}):`, fallbackErr);
@@ -325,15 +339,138 @@ export async function askGroq(
   prompt: string,
   apiKey?: string,
   model?: string,
-  systemPrompt: string = "Eres un asistente de alta precisión."
+  systemPrompt: string = "Eres un asistente táctico de alta precisión."
 ): Promise<string> {
   return chatWithGroq(
     [
       { role: "system", content: systemPrompt },
       { role: "user", content: prompt },
     ],
-    { apiKey, model }
+    { apiKey, model, temperature: 0.25 }
   );
+}
+
+/**
+ * FASE 1, 3 y 4: PIPELINE ASÍNCRONO DE EXTRACCIÓN DE VARIABLES INMUTABLES
+ * Utiliza el modelo ultrarrápido `llama-3.1-8b-instant` a temperatura 0.1 para
+ * descartar prosa narrativa/anécdotas y destilar únicamente las 5 variables
+ * obligatorias (~60 a 90 tokens por ficha).
+ */
+export async function extractFichaVivenciaGroq(
+  rawNarrativeText: string,
+  ramaSugerida?: RamaTematica,
+  sequenceIndex = 1
+): Promise<FichaVivenciaInmutable> {
+  const fechaHoy = new Date().toISOString().split("T")[0];
+  const { rama: ramaDetectada, tags: tagsDetectados } = detectarRamaYTags(rawNarrativeText);
+  const ramaInicial: RamaTematica = ramaSugerida || ramaDetectada;
+  const fichaId = `VIV-${fechaHoy}-${String(sequenceIndex).padStart(2, "0")}`;
+
+  const prompt = `Extrae una Ficha Episódica Inmutable de 60 a 90 tokens a partir del siguiente relato de vivencia.
+
+REGLAS DE FILTRADO ESTRICTO:
+1. DESCARTE DE RUIDO: Elimina toda prosa narrativa, anécdotas circunstanciales ("fui a la cocina, tomé un café..."), nombres irrelevantes y reflexiones abstractas.
+2. CONSERVA SOLO LAS 5 VARIABLES OBLIGATORIAS:
+   - detonante_exacto: El hecho puntual objetivo que disparó el conflicto, bloqueo o acción.
+   - contexto_situacional: { momento (franja horaria y entorno), nivel_energia ("alto"|"medio"|"bajo"), factores_externos (interrupciones o presión) }.
+   - reaccion_inicial: El sesgo o loop automático en el que se cayó (ej. perfeccionismo, multitarea, evitación, búsqueda de aprobación).
+   - solucion_aplicada: La micro-acción real de quiebre ejecutada o acordada.
+   - resultado: "exito" | "neutro" | "fallo".
+3. CLASIFICACIÓN:
+   - rama_id: "proyectos" | "vinculos" | "habitos" (Rama sugerida: "${ramaInicial}").
+   - tags_mecanismo: Array de 1 a 3 etiquetas de mecanismo en snake_case con # (ej. ["#paralisis_perfeccionismo", "#fatiga_tarde", "#ambiguedad_externa", "#busqueda_aprobacion", "#ansiedad_examen", "#efecto_que_carajo", "#sobreestimulacion_digital"]).
+
+RELATO DE ENTRADA:
+"${rawNarrativeText.trim()}"
+
+RESPONDE ESTRICTAMENTE EN JSON VÁLIDO CON ESTE ESQUEMA:
+{
+  "rama_id": "proyectos",
+  "tags_mecanismo": ["#paralisis_perfeccionismo"],
+  "contexto_situacional": {
+    "momento": "Franja y entorno conciso",
+    "nivel_energia": "alto",
+    "factores_externos": "Presión o entorno"
+  },
+  "detonante_exacto": "Hecho objetivo disparador (máx 15 palabras)",
+  "reaccion_inicial": "Loop automático observado (máx 12 palabras)",
+  "solucion_aplicada": "Micro-acción de quiebre aplicada (máx 18 palabras)",
+  "resultado": "exito"
+}`;
+
+  try {
+    const rawJson = await chatWithGroq(
+      [
+        {
+          role: "system",
+          content: "Eres un extractor quirúrgico de variables conductuales estructuradas. Descartas toda prosa narrativa y respondes únicamente JSON válido.",
+        },
+        { role: "user", content: prompt },
+      ],
+      {
+        model: EXTRACTION_GROQ_MODEL,
+        temperature: 0.1,
+        max_tokens: 320,
+        jsonMode: true,
+      }
+    );
+
+    const parsed = JSON.parse(rawJson);
+    const ramaValida: RamaTematica =
+      parsed.rama_id === "proyectos" || parsed.rama_id === "vinculos" || parsed.rama_id === "habitos"
+        ? parsed.rama_id
+        : ramaInicial;
+
+    const nivelEnergiaValido: "alto" | "medio" | "bajo" =
+      parsed.contexto_situacional?.nivel_energia === "alto" ||
+      parsed.contexto_situacional?.nivel_energia === "medio" ||
+      parsed.contexto_situacional?.nivel_energia === "bajo"
+        ? parsed.contexto_situacional.nivel_energia
+        : "medio";
+
+    const resultadoValido: "exito" | "neutro" | "fallo" =
+      parsed.resultado === "exito" || parsed.resultado === "neutro" || parsed.resultado === "fallo"
+        ? parsed.resultado
+        : "exito";
+
+    return {
+      id: fichaId,
+      fecha: fechaHoy,
+      rama_id: ramaValida,
+      tags_mecanismo:
+        Array.isArray(parsed.tags_mecanismo) && parsed.tags_mecanismo.length > 0
+          ? parsed.tags_mecanismo
+          : tagsDetectados,
+      contexto_situacional: {
+        momento: parsed.contexto_situacional?.momento || "Horario operativo habitual",
+        nivel_energia: nivelEnergiaValido,
+        factores_externos: parsed.contexto_situacional?.factores_externos || "Sin factores externos críticos",
+      },
+      detonante_exacto: parsed.detonante_exacto || rawNarrativeText.slice(0, 120),
+      reaccion_inicial: parsed.reaccion_inicial || "Fricción inicial ante la situación",
+      solucion_aplicada: parsed.solucion_aplicada || rawNarrativeText.slice(0, 140),
+      resultado: resultadoValido,
+      inmutable: true,
+    };
+  } catch (err) {
+    console.warn("[Groq Extraction Pipeline] Usando extracción determinista local:", err);
+    return {
+      id: fichaId,
+      fecha: fechaHoy,
+      rama_id: ramaInicial,
+      tags_mecanismo: tagsDetectados,
+      contexto_situacional: {
+        momento: "Registro directo",
+        nivel_energia: "medio",
+        factores_externos: "Ingreso manual",
+      },
+      detonante_exacto: rawNarrativeText.slice(0, 120),
+      reaccion_inicial: "Registrado para seguimiento de patrón",
+      solucion_aplicada: rawNarrativeText.slice(0, 150),
+      resultado: "exito",
+      inmutable: true,
+    };
+  }
 }
 
 /**
@@ -356,7 +493,7 @@ Evalúa las respuestas de los estudiantes garantizando precisión conceptual y a
       { role: "system", content: systemPrompt },
       { role: "user", content: JSON.stringify(questions, null, 2) },
     ],
-    { jsonMode: true }
+    { jsonMode: true, temperature: 0.2 }
   );
 }
 
@@ -381,53 +518,29 @@ Reescribe las secciones indicadas aplicando el feedback y manteniendo el resto d
 }
 
 /**
- * Resume una nota mental de forma concisa, contextual y dimensional con Groq AI.
+ * Sintetiza una nota mental estructurándola bajo las 5 variables obligatorias
+ * (Detonante, Contexto/Energía, Sesgo de reacción, Acción de quiebre y Resultado),
+ * evitando la compresión destructiva de texto libre.
  */
 export async function summarizeMentalNoteWithGroq(
   noteText: string,
   existingNotes: { text: string; summary?: string; category?: string }[] = [],
-  userName: string = "Juan"
+  _userName: string = "Juan"
 ): Promise<string> {
-  const existingContext = (existingNotes || [])
-    .slice(0, 8)
-    .map((n) => `- ${n.summary || n.text}`)
-    .join("\n");
-
-  const prompt = `Actúa como el motor analítico de memoria evolutiva y síntesis de notas para ${userName}.
-Tu objetivo es generar una síntesis concisa, de alta densidad informativa y sin redundancias de la siguiente Nota Mental / Vivencia.
-
-CRITERIOS METODOLÓGICOS:
-1. SIGUE EL FLUJO CONTEXTUAL: Contexto/Momento → Detonante/Hecho → Dimensión/Estado (Positivo (+) / Negativo (-)) → Principio o Directriz Operativa.
-2. ALTA DENSIDAD Y CLARIDAD: Extrae en 1 a 2 líneas compactas la esencia operativa, el hecho observable y la lección o directriz mental.
-3. CERO CLASIFICACIONES FORZADAS: Si es una experiencia libre o hecho sin categoría previa, consérvala fiel a la vivencia.
-4. NO REDUNDANCIA: No repitas conceptos ya cubiertos en notas previas; destaca el valor distintivo de esta nota.
-5. SIN RELLENO: Devuelve únicamente el resumen directo, sin introducciones ni etiquetas superfluas.
-
-OTRAS NOTAS MENTALES REGISTRADAS PREVIAMENTE (Para evitar duplicidades):
-${existingContext || "Ninguna previa."}
-
-NOTA MENTAL A RESUMIR:
-"${noteText.trim()}"`;
-
-  return chatWithGroq(
-    [
-      { role: "system", content: "Eres un sintetizador de conocimiento neuroconductual conciso y preciso." },
-      { role: "user", content: prompt },
-    ],
-    { temperature: 0.2, max_tokens: 300 }
-  );
+  const ficha = await extractFichaVivenciaGroq(noteText, undefined, existingNotes.length + 1);
+  return JSON.stringify(ficha);
 }
 
 /**
  * Extrae los 4 ejes dimensionales (Seguridad, Libertad, Regulación, Relaciones)
- * con intensidad (-10 a +10) y evidencia a partir del resumen Markdown estructurado.
+ * con intensidad (-10 a +10) y evidencia a partir del resumen estructurado.
  */
 export async function extractDimensionalAxesGroq(
   summaryText: string,
   userName: string = "Juan"
 ): Promise<{
   axes: Array<{
-    axis: 'seguridad' | 'libertad' | 'regulacion' | 'relaciones';
+    axis: "seguridad" | "libertad" | "regulacion" | "relaciones";
     label: string;
     positive: string;
     negative: string;
@@ -435,7 +548,7 @@ export async function extractDimensionalAxesGroq(
     evidence: string;
   }>;
   dominantPattern: string;
-  evolutionVsPrevious: 'mejora' | 'regresion' | 'estable' | 'nuevo';
+  evolutionVsPrevious: "mejora" | "regresion" | "estable" | "nuevo";
   contradictions: string[];
   novelInsights: string[];
 }> {
@@ -490,7 +603,7 @@ RESPONDE ESTRICTAMENTE EN FORMATO JSON VÁLIDO CON ESTE ESQUEMA:
     }
   ],
   "dominantPattern": "Patrón dominante identificado en la interacción",
-  "evolutionVsPrevious": "mejora" | "regresion" | "estable" | "nuevo",
+  "evolutionVsPrevious": "mejora",
   "contradictions": ["Contradicción o tensión detectada en la narrativa"],
   "novelInsights": ["Elemento novedoso reportado por primera vez"]
 }`;
@@ -499,9 +612,9 @@ RESPONDE ESTRICTAMENTE EN FORMATO JSON VÁLIDO CON ESTE ESQUEMA:
     const raw = await chatWithGroq(
       [
         { role: "system", content: "Eres un analista neuroconductual de métricas dimensionales. Responde solo JSON." },
-        { role: "user", content: prompt }
+        { role: "user", content: prompt },
       ],
-      { jsonMode: true, temperature: 0.1, max_tokens: 1000 }
+      { model: EXTRACTION_GROQ_MODEL, jsonMode: true, temperature: 0.1, max_tokens: 1000 }
     );
     return JSON.parse(raw);
   } catch (err) {
@@ -511,14 +624,12 @@ RESPONDE ESTRICTAMENTE EN FORMATO JSON VÁLIDO CON ESTE ESQUEMA:
         { axis: "seguridad", label: "Seguridad Personal", positive: "Confianza", negative: "Inseguridad", intensity: 5, evidence: "Sesión procesada" },
         { axis: "libertad", label: "Libertad y Espontaneidad", positive: "Espontaneidad", negative: "Control", intensity: 4, evidence: "Sesión procesada" },
         { axis: "regulacion", label: "Regulación Emocional", positive: "Calma", negative: "Ansiedad", intensity: 6, evidence: "Sesión procesada" },
-        { axis: "relaciones", label: "Relaciones e Interacción", positive: "Apertura", negative: "Búsqueda aprobación", intensity: 4, evidence: "Sesión procesada" }
+        { axis: "relaciones", label: "Relaciones e Interacción", positive: "Apertura", negative: "Búsqueda aprobación", intensity: 4, evidence: "Sesión procesada" },
       ],
       dominantPattern: "Interacción general",
       evolutionVsPrevious: "estable",
       contradictions: [],
-      novelInsights: []
+      novelInsights: [],
     };
   }
 }
-
-

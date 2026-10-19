@@ -3,7 +3,61 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type MemoryCategory = 'experiencias' | 'general' | 'preferencias' | 'hábitos' | 'objetivos' | 'identidad' | 'creencias' | 'estrategias' | 'valores' | string;
+export type RamaTematica = 'proyectos' | 'vinculos' | 'habitos';
+
+export type MemoryCategory =
+  | RamaTematica
+  | 'experiencias'
+  | 'general'
+  | 'preferencias'
+  | 'hábitos'
+  | 'objetivos'
+  | 'identidad'
+  | 'creencias'
+  | 'estrategias'
+  | 'valores'
+  | string;
+
+// Ficha Episódica Inmutable (Nivel 1 - Solo lectura permanente tras crearse, ~60-90 tokens)
+export interface FichaVivenciaInmutable {
+  id: string; // ej: "VIV-2026-10-19-01"
+  fecha: string;
+  rama_id: RamaTematica;
+  tags_mecanismo: string[]; // ej: ["#paralisis_perfeccionismo", "#fatiga_tarde"]
+  contexto_situacional: {
+    momento: string; // Horario y entorno físico
+    nivel_energia: 'alto' | 'medio' | 'bajo';
+    factores_externos: string; // Interrupciones, presiones de entrega
+  };
+  detonante_exacto: string; // Hecho puntual objetivo disparador
+  reaccion_inicial: string; // Conducta o loop automático (sesgo)
+  solucion_aplicada: string; // Micro-acción real de quiebre
+  resultado: 'exito' | 'neutro' | 'fallo';
+  inmutable?: boolean; // Bloqueo de re-compresión
+}
+
+// Nodo de Patrón Consolidado (Nivel 2 - Indexación por punteros sin re-resumir texto)
+export interface NodoPatron {
+  id: string; // ej: "PAT-01"
+  nombre: string;
+  rama_id: RamaTematica;
+  tags_mecanismo?: string[];
+  punteros_vivencias: string[]; // Array de IDs hacia FichaVivenciaInmutable
+  frecuencia: number;
+  correlacion_situacional: string; // Condiciones comunes detectadas
+  soluciones_efectivas: string[];
+  tasa_exito?: number; // Porcentaje 0-100 calculado estadísticamente
+}
+
+// Estado del Hilo Activo (Continuidad reciente por rama)
+export interface HiloActivo {
+  id: string; // ej: "HILO-45"
+  rama_id: RamaTematica;
+  titulo_tema: string;
+  resumen_estado_actual: string; // Qué se intentó ayer y qué falta hoy
+  ultimas_interacciones: Array<{ rol: 'user' | 'assistant'; texto: string }>;
+  activo: boolean;
+}
 
 export interface Memory {
   id: string;
@@ -13,6 +67,11 @@ export interface Memory {
   isApproved: boolean;
   summary?: string;
   origin?: string;
+  // Fase 1 & 2: Soporte nativo de Ficha Inmutable y Poda por Ramas
+  fichaInmutable?: FichaVivenciaInmutable;
+  rama_id?: RamaTematica;
+  tags_mecanismo?: string[];
+  isImmutable?: boolean;
 }
 
 // 4 Ejes Dimensionales del Sistema Mental
@@ -44,6 +103,8 @@ export interface Conversation {
   summary: string | null;
   isSummarized: boolean;
   analysisMetadata?: AnalysisMetadata | null;
+  rama_id?: RamaTematica;
+  hiloActivo?: HiloActivo | null;
 }
 
 // Marco mental con trazabilidad de origen
@@ -84,6 +145,15 @@ export interface ContextEvolutionReport {
   activePrinciples: string[];
 }
 
+export interface TacticalAnalysisBlock {
+  continuidad: string;
+  consejoGenericoDescartado: string;
+  patronDetectado: string;
+  consejoTactico: string;
+  ramaDetectada?: RamaTematica;
+  fichasCitadas?: string[];
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -95,6 +165,7 @@ export interface Message {
     description: string;
   } | null;
   energyLevel?: number | null;
+  tacticalAnalysis?: TacticalAnalysisBlock | null;
   suggestions?: {
     decision?: DecisionSuggestion | null;
     strategy?: StrategySuggestion | null;
@@ -142,6 +213,7 @@ export interface Decision {
   reason: string;
   status: 'en prueba' | 'consolidada' | 'descartada';
   reviewDate?: string;
+  rama_id?: RamaTematica;
 }
 
 // Capa E: Opciones y Estrategias (Qué funcionó vs Qué NO funcionó)
@@ -155,6 +227,8 @@ export interface Strategy {
   resultType: 'positivo' | 'negativo';
   reason: string;
   createdAt: string;
+  rama_id?: RamaTematica;
+  tags_mecanismo?: string[];
 }
 
 export interface Pattern {
@@ -162,6 +236,8 @@ export interface Pattern {
   type: 'dato observado' | 'asociación' | 'hipótesis';
   description: string;
   createdAt: string;
+  // Fase 1 & 2: Nodo de Patrón por punteros a Fichas Inmutables
+  nodoPatron?: NodoPatron;
 }
 
 export interface QuickLogState {
@@ -299,6 +375,7 @@ export interface AIChatResponse {
     tags: string[];
     description: string;
   };
+  tacticalAnalysis?: TacticalAnalysisBlock | null;
   suggestedMemory?: string;
   suggestedDecision?: DecisionSuggestion | null;
   suggestedStrategy?: StrategySuggestion | null;

@@ -9,7 +9,7 @@ import {
   CheckCircle2, Ban, ShieldCheck, Target
 } from "lucide-react";
 import { DailyLog, Memory, Conversation, Pattern, Strategy, Decision, CurrentState } from "../types";
-import { UserProfile } from "../lib/storage";
+import { UserProfile, consolidarNodosPatronesPorPunteros } from "../lib/storage";
 import { getStoredGroqApiKey, getStoredGroqModel } from "../services/groqEvaluation";
 import { 
   createEstrategiaPB, 
@@ -145,9 +145,11 @@ export default function AnalisisView({
 
       onUpdatePatterns(newPatterns);
       newPatterns.forEach((p) => createPatronPB(p).catch(console.warn));
-    } catch (err: any) {
-      console.error(err);
-      setAnalysisError(err.message || "Error al solicitar análisis de patrones.");
+    } catch (_err: any) {
+      // Fase 1 Capa 2: Consolidación determinista local de Nodos de Patrones por Punteros
+      const pointerPatterns = consolidarNodosPatronesPorPunteros(memories);
+      onUpdatePatterns(pointerPatterns);
+      pointerPatterns.forEach((p) => createPatronPB(p).catch(console.warn));
     } finally {
       setIsAnalyzing(false);
     }

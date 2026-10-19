@@ -53,6 +53,15 @@ import {
   ContextEvolutionReport
 } from "../types";
 import { UserProfile, ZenDB } from "../lib/storage";
+import {
+  detectarRamaYTags,
+  podarFichasParaInferencia,
+  formatearFichasInmutablesCompactas,
+  construirHiloActivoTexto,
+  buildRepairedSystemPrompt,
+  ASSISTANT_PREFILL_TAG,
+  parseRepairedTacticalOutput,
+} from "../lib/baseContext";
 import { getStoredGroqApiKey, getStoredGroqModel, chatWithGroq, extractDimensionalAxesGroq } from "../services/groqEvaluation";
 import { 
   upsertConversacionSummaryPB, 
@@ -624,35 +633,29 @@ ${textToSummarize}`;
       }
 
       if (!data || !data.message) {
-        // Fallback directo a Groq Cloud
-        const posStrats = strategies.filter((s) => s.resultType === 'positivo' || s.status === 'recomendada');
-        const negStrats = strategies.filter((s) => s.resultType === 'negativo' || s.status === 'descartada');
+        // Fallback directo a Groq Cloud con Arquitectura Reparada (Fases 2, 3 y 4)
+        const activeThreadMsgs = updatedMessages.filter((m) => m.conversationId === activeConversationId);
+        const { rama: ramaActiva, tags: tagsDetectados } = detectarRamaYTags(userText, activeThreadMsgs);
 
-        const systemInstruction = `Eres ${profile.companionName}, el Socio de Pensamiento y Neuro-Mentor Estratégico de ${profile.userName}. Tu objetivo es conversar con máxima lucidez, naturalidad humana y sentido común: ESCUCHAR con atención lo que Juan plantea, conceder lo que sea cierto, desarmar distorsiones con lógica implacable y ayudarlo a tomar decisiones claras en cualquier ámbito de su vida (académico, laboral, relacional, personal, hábitos o proyectos).
+        const fichasPodadas = podarFichasParaInferencia(
+          memories.filter((m) => m.isApproved),
+          strategies,
+          ramaActiva,
+          tagsDetectados,
+          5
+        );
+        const fichasCompactasTexto = formatearFichasInmutablesCompactas(fichasPodadas, ramaActiva);
+        const hiloRecienteTexto = construirHiloActivoTexto(activeThreadMsgs, decisions, currentState, ramaActiva);
 
-PRINCIPIOS UNIVERSALES DE CONVERSACIÓN:
-1. ESCUCHA REAL: Si Juan te explica una lógica o un mecanismo, integralo de inmediato. Si su razonamiento es correcto, reconocelo y avanzá hacia las implicancias reales. No pidas fuentes externas ni actúes como evaluador académico.
-2. CERO FÓRMULAS FIJAS O PLANTILLAS: Las muletillas de apertura son bienvenidas, pero VARIÁ la apertura y estructura en cada turno. Prohibido encadenar la misma fórmula sintáctica.
-3. CONCESIÓN EXPLÍCITA: Si Juan plantea un riesgo o limitación biológica tangible (cansancio real, valle circadiano), concedelo explícitamente. No maquilles realidades.
-4. PROTOCOLO DE BAJA ENERGÍA / DISPERSIÓN (PRIORIDAD #1):
-   - Si Juan expresa fatiga, desgano o dispersión (ej. franja post-almuerzo >13:00 o "no tengo ganas de nada"): NO mandar de inmediato al Yo Robot ni forzar con "debo hacerlo".
-   - PRIORIDAD 1: DETENER TODO y hacer meditación / silencio mental sin pantallas (5, 12, 30 o 60 min).
-   - POST-MEDITACIÓN: Una vez recuperado el estado basal en calma, recién ahí se evalúa el Método Yo Robot (15s) o se traslada la tarea compleja a la Franja Dorada matutina (07:00 a 12:00) y se deja la tarde para descanso o tareas mecánicas sin culpa.
-5. ESTILO: Segunda persona directa (voseo), fluido, inteligente, convincente, sin encabezados de reporte ("Diagnóstico:", etc.) y sin positivismo barato.
+        const systemInstruction = buildRepairedSystemPrompt({
+          ramaActiva,
+          tagsDetectados,
+          hiloRecienteTexto,
+          fichasCompactasTexto,
+        });
 
-CONTEXTO Y MEMORIA:
-- IDENTIDAD: ${profile.notes}
-- METAS: ${(currentState?.activeGoals || []).join("; ")}
-- BLOQUEOS: ${(currentState?.openProblems || []).join("; ")}
-- DECISIONES: ${decisions.map((d) => `[${d.status}] ${d.decision}`).join("; ")}
-- LO QUE FUNCIONÓ: ${posStrats.map((s) => `${s.name}: ${s.result}`).join("; ")}
-- DESCARTADAS: ${negStrats.map((s) => `${s.name}: ${s.reason || s.result}`).join("; ")}
-
-Responde en JSON con: { "message": "Tu respuesta lúcida, natural, convincente y adaptada al contexto en español.", "energyLevel": 7 }`;
-
-        const convHistory = updatedMessages
-          .filter((m) => m.conversationId === activeConversationId)
-          .slice(-8)
+        const convHistory = activeThreadMsgs
+          .slice(-5)
           .map((m) => ({
             role: (m.sender === "user" ? "user" : "assistant") as "user" | "assistant",
             content: m.text,
@@ -666,18 +669,23 @@ Responde en JSON con: { "message": "Tu respuesta lúcida, natural, convincente y
           {
             apiKey: groqKey,
             model: groqModel,
-            jsonMode: true,
-            temperature: 0.6,
-            max_tokens: 1500,
+            jsonMode: false,
+            temperature: 0.25,
+            max_tokens: 900,
+            assistantPrefill: ASSISTANT_PREFILL_TAG,
           }
         );
 
-        try {
-          const cleanJson = groqResponse.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-          data = JSON.parse(cleanJson);
-        } catch {
-          data = { message: groqResponse, energyLevel: 7 };
-        }
+        const { formattedMessage, tacticalAnalysis } = parseRepairedTacticalOutput(
+          groqResponse,
+          ramaActiva,
+          true
+        );
+        data = {
+          message: formattedMessage,
+          tacticalAnalysis,
+          energyLevel: 7,
+        };
       }
 
       const aiMsg: Message = {

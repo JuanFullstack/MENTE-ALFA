@@ -13,9 +13,12 @@ import {
   CurrentState,
   DailyReport,
   Decision,
-  SistemaMentalData
+  SistemaMentalData,
+  FichaVivenciaInmutable,
+  NodoPatron,
+  RamaTematica
 } from "../types";
-import { RAW_BASE_CONTEXT } from "./baseContext";
+import { RAW_BASE_CONTEXT, asegurarFichaInmutable } from "./baseContext";
 
 // Keys for local storage
 const KEYS = {
@@ -323,15 +326,17 @@ const INITIAL_DECISIONS: Decision[] = [
     date: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
     decision: "Concentrar tareas de alta carga cognitiva estrictamente en la franja 07:00 a 12:00",
     reason: "Pico biológico de alerta y concentración; trabajar de tarde genera fricción innecesaria",
-    status: "consolidada"
+    status: "consolidada",
+    rama_id: "proyectos"
   },
   {
     id: "dec-2",
     date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    decision: "Aplicar micro-metas de 15 minutos (Método Yo Robot) cuando aparezca resistencia",
+    decision: "Aplicar micro-metas de 15 minutos (Método Yo Robot) post-meditación cuando aparezca resistencia",
     reason: "Desactivar la alarma de la amígdala y encender corteza prefrontal izquierda",
     status: "en prueba",
-    reviewDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+    reviewDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+    rama_id: "habitos"
   }
 ];
 
@@ -370,34 +375,76 @@ const INITIAL_CONVERSATIONS: Conversation[] = [
     updatedAt: new Date().toISOString(),
     summary: null,
     isSummarized: false,
+    rama_id: "proyectos",
   }
 ];
 
 const INITIAL_MESSAGES: Message[] = [];
 
-const INITIAL_MEMORIES: Memory[] = [
+// FASE 1: Fichas Episódicas Inmutables Iniciales (~60-90 tokens por ficha, 5 variables obligatorias)
+const INITIAL_FICHAS_INMUTABLES: FichaVivenciaInmutable[] = [
   {
-    id: "mem-1",
-    text: "Prefiere trabajar sin música cuando realiza tareas analíticas. Se siente más productivo por la mañana (07:00 a 12:00).",
-    category: "preferencias",
-    createdAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
-    isApproved: true,
+    id: "VIV-2026-10-15-01",
+    fecha: "2026-10-15",
+    rama_id: "proyectos",
+    tags_mecanismo: ["#paralisis_perfeccionismo", "#ambiguedad_externa"],
+    contexto_situacional: {
+      momento: "08:15 AM, escritorio de estudio (Franja Dorada)",
+      nivel_energia: "alto",
+      factores_externos: "Observaciones amplias de mentores de Tesis GitFlow sin acotar alcance",
+    },
+    detonante_exacto: "Requerimiento extenso del marco metodológico sin saber por qué sección empezar",
+    reaccion_inicial: "Sobre-análisis de toda la arquitectura y apertura de pestañas secundarias (evitación)",
+    solucion_aplicada: "Método Pregunta-Respuesta: escribir 1 única pregunta concreta en un archivo vacío durante 15 min (52/17)",
+    resultado: "exito",
+    inmutable: true,
   },
   {
-    id: "mem-2",
-    text: "Meta actual: consolidar sesiones de trabajo en bloques de 52/17 sin distracciones digitales.",
-    category: "objetivos",
-    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-    isApproved: true,
+    id: "VIV-2026-10-16-02",
+    fecha: "2026-10-16",
+    rama_id: "habitos",
+    tags_mecanismo: ["#fatiga_tarde", "#sobreestimulacion_digital"],
+    contexto_situacional: {
+      momento: "15:30 PM, post-almuerzo frente a la PC",
+      nivel_energia: "bajo",
+      factores_externos: "Caída circadiana vespertina y agotamiento tras 4 horas de código por la mañana",
+    },
+    detonante_exacto: "Intento de forzar debugging complejo de SQL/pgAdmin4 a las 15:30 con pesadez mental",
+    reaccion_inicial: "Autocrítica con 'debo hacerlo' y consumo de pantallas que agravó la fatiga",
+    solucion_aplicada: "Detener todo de inmediato -> NSDR/silencio de 20 min sin pantallas -> reprogramar SQL a las 07:30 AM del día siguiente",
+    resultado: "exito",
+    inmutable: true,
   },
   {
-    id: "mem-3",
-    text: "Suele tener picos de creatividad y energía mental durante las mañanas de los días miércoles.",
-    category: "hábitos",
-    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    isApproved: true,
-  }
+    id: "VIV-2026-10-17-03",
+    fecha: "2026-10-17",
+    rama_id: "vinculos",
+    tags_mecanismo: ["#busqueda_aprobacion", "#paralisis_perfeccionismo"],
+    contexto_situacional: {
+      momento: "19:00 PM, grabación de video explicativo / interacción social",
+      nivel_energia: "medio",
+      factores_externos: "Auto-observación rígida y expectativa de causar impresión perfecta",
+    },
+    detonante_exacto: "Fricción al iniciar grabación/charla por evaluar cómo va a reaccionar el otro",
+    reaccion_inicial: "Rigidez expresiva, ensayo mental de frases y postergación del arranque",
+    solucion_aplicada: "Método Transición (5 min aislación + principio 'Da igual / No importa' + toma cruda de 2 min sin editar con humor)",
+    resultado: "exito",
+    inmutable: true,
+  },
 ];
+
+const INITIAL_MEMORIES: Memory[] = INITIAL_FICHAS_INMUTABLES.map((f) => ({
+  id: f.id,
+  text: `[${f.id}] Detonante: ${f.detonante_exacto} | Contexto: ${f.contexto_situacional.momento} (Energía ${f.contexto_situacional.nivel_energia}) | Sesgo: ${f.reaccion_inicial} | Quiebre: ${f.solucion_aplicada} -> Resultado: ${f.resultado.toUpperCase()}`,
+  category: f.rama_id,
+  createdAt: new Date(f.fecha).toISOString(),
+  isApproved: true,
+  summary: JSON.stringify(f),
+  fichaInmutable: f,
+  rama_id: f.rama_id,
+  tags_mecanismo: f.tags_mecanismo,
+  isImmutable: true,
+}));
 
 const INITIAL_LOGS: DailyLog[] = [
   {
@@ -445,28 +492,34 @@ const INITIAL_STRATEGIES: Strategy[] = [
     resultType: "positivo",
     reason: "Alineado con ritmo circadiano y sin interrupciones",
     createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+    rama_id: "proyectos",
+    tags_mecanismo: ["#paralisis_perfeccionismo", "#ansiedad_examen"],
   },
   {
     id: "strat-2",
-    name: "Estudio Intelectual Nocturno (21:00 - 00:00)",
-    situation: "Intentar compensar horas no avanzadas durante el día",
+    name: "Estudio Intelectual Vespertino/Nocturno (>15:00 o 21:00)",
+    situation: "Intentar compensar horas no avanzadas durante el día con baja energía",
     result: "Frustración, lentitud cognitiva e insomnio reactivo",
     effectiveness: "baja",
     status: "descartada",
     resultType: "negativo",
     reason: "Agotamiento de glucosa prefrontal y alteración del sueño reparador",
     createdAt: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString(),
+    rama_id: "habitos",
+    tags_mecanismo: ["#fatiga_tarde"],
   },
   {
     id: "strat-3",
-    name: "Micro-acción de 15 minutos (Método Yo Robot)",
-    situation: "Apatía, parálisis por sobre-análisis o resistencia al empezar",
+    name: "Micro-acción de 15 minutos (Método Yo Robot Post-Meditación)",
+    situation: "Apatía, parálisis por sobre-análisis o resistencia al empezar tras haber reseteado",
     result: "Desbloquea la inercia y permite entrar en flujo natural",
     effectiveness: "alta",
     status: "recomendada",
     resultType: "positivo",
     reason: "Reduce la fricción a cero y activa la corteza prefrontal izquierda",
     createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    rama_id: "proyectos",
+    tags_mecanismo: ["#paralisis_perfeccionismo", "#ambiguedad_externa"],
   },
   {
     id: "strat-4",
@@ -478,29 +531,69 @@ const INITIAL_STRATEGIES: Strategy[] = [
     resultType: "negativo",
     reason: "Genera fatiga decisional y dispersión del foco de la linterna",
     createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    rama_id: "proyectos",
+    tags_mecanismo: ["#paralisis_perfeccionismo", "#efecto_que_carajo"],
   }
 ];
 
-const INITIAL_PATTERNS: Pattern[] = [
-  {
-    id: "pat-1",
-    type: "dato observado",
-    description: "Mayor claridad mental y avance de tesis entre 07:00 y 11:30.",
-    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "pat-2",
-    type: "asociación",
-    description: "Intentar forzar estudio analítico de tarde eleva el estrés un 40% y no produce avance.",
-    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "pat-3",
-    type: "hipótesis",
-    description: "Las micro-metas de fricción cero reducen la parálisis inicial de código.",
-    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+/**
+ * FASE 1 (CAPA 2): CONSOLIDACIÓN DE NODOS DE PATRONES POR PUNTEROS
+ * Agrupa vivencias inmutables que comparten etiquetas de mecanismo o detonantes,
+ * calculando correlaciones estadísticas de éxito/fracaso mediante punteros (IDs)
+ * sin re-comprimir ni destruir las fichas originales.
+ */
+export function consolidarNodosPatronesPorPunteros(memories: Memory[]): Pattern[] {
+  const fichas = (memories || []).map((m, i) => asegurarFichaInmutable(m, i + 1));
+  const mapaPorTag = new Map<string, FichaVivenciaInmutable[]>();
+
+  for (const ficha of fichas) {
+    const tags = ficha.tags_mecanismo && ficha.tags_mecanismo.length > 0
+      ? ficha.tags_mecanismo
+      : [`#rama_${ficha.rama_id}`];
+    for (const tag of tags) {
+      const lista = mapaPorTag.get(tag) || [];
+      lista.push(ficha);
+      mapaPorTag.set(tag, lista);
+    }
   }
-];
+
+  const patronesConsolidados: Pattern[] = [];
+  let idx = 1;
+
+  for (const [tag, grupo] of mapaPorTag.entries()) {
+    const punteros = grupo.map((g) => g.id);
+    const exitosas = grupo.filter((g) => g.resultado === "exito");
+    const tasaExito = Math.round((exitosas.length / Math.max(1, grupo.length)) * 100);
+    const solucionesEfectivas = Array.from(new Set(exitosas.map((e) => e.solucion_aplicada)));
+    const momentosComunes = Array.from(new Set(grupo.map((g) => `${g.contexto_situacional.momento} (Energía ${g.contexto_situacional.nivel_energia})`))).join(" | ");
+    const ramaDominante: RamaTematica = grupo[0]?.rama_id || "proyectos";
+
+    const nodo: NodoPatron = {
+      id: `PAT-${String(idx).padStart(2, "0")}`,
+      nombre: `Nodo ${tag} (${ramaDominante.toUpperCase()})`,
+      rama_id: ramaDominante,
+      tags_mecanismo: [tag],
+      punteros_vivencias: punteros,
+      frecuencia: grupo.length,
+      correlacion_situacional: momentosComunes,
+      soluciones_efectivas: solucionesEfectivas.length > 0 ? solucionesEfectivas : ["En observación"],
+      tasa_exito: tasaExito,
+    };
+
+    patronesConsolidados.push({
+      id: nodo.id,
+      type: "asociación",
+      description: `[${nodo.id} · ${tag}] Punteros: [${punteros.join(", ")}] (Frecuencia: ${nodo.frecuencia} | Éxito: ${tasaExito}%). Condición: ${nodo.correlacion_situacional}. Quiebre probado: ${nodo.soluciones_efectivas.join(" / ")}`,
+      createdAt: new Date().toISOString(),
+      nodoPatron: nodo,
+    });
+    idx++;
+  }
+
+  return patronesConsolidados;
+}
+
+const INITIAL_PATTERNS: Pattern[] = consolidarNodosPatronesPorPunteros(INITIAL_MEMORIES);
 
 export function getLocalStorage<T>(key: string, initialValue: T): T {
   try {
@@ -576,10 +669,31 @@ export const ZenDB = {
   },
 
   getMemories(): Memory[] {
-    return getLocalStorage<Memory[]>(KEYS.MEMORIES, INITIAL_MEMORIES);
+    const raw = getLocalStorage<Memory[]>(KEYS.MEMORIES, INITIAL_MEMORIES);
+    // Garantizar que toda memoria tenga su FichaVivenciaInmutablehidratada y protegida
+    return raw.map((m, idx) => {
+      const ficha = asegurarFichaInmutable(m, idx + 1);
+      return {
+        ...m,
+        fichaInmutable: ficha,
+        rama_id: m.rama_id || ficha.rama_id,
+        tags_mecanismo: m.tags_mecanismo || ficha.tags_mecanismo,
+        isImmutable: true,
+      };
+    });
   },
   setMemories(memories: Memory[]): void {
-    setLocalStorage(KEYS.MEMORIES, memories);
+    const hydrated = memories.map((m, idx) => {
+      const ficha = asegurarFichaInmutable(m, idx + 1);
+      return {
+        ...m,
+        fichaInmutable: ficha,
+        rama_id: m.rama_id || ficha.rama_id,
+        tags_mecanismo: m.tags_mecanismo || ficha.tags_mecanismo,
+        isImmutable: true,
+      };
+    });
+    setLocalStorage(KEYS.MEMORIES, hydrated);
   },
 
   getLogs(): DailyLog[] {
@@ -597,7 +711,11 @@ export const ZenDB = {
   },
 
   getPatterns(): Pattern[] {
-    return getLocalStorage<Pattern[]>(KEYS.PATTERNS, INITIAL_PATTERNS);
+    const stored = getLocalStorage<Pattern[]>(KEYS.PATTERNS, INITIAL_PATTERNS);
+    if (!stored || stored.length === 0) {
+      return consolidarNodosPatronesPorPunteros(this.getMemories());
+    }
+    return stored;
   },
   setPatterns(patterns: Pattern[]): void {
     setLocalStorage(KEYS.PATTERNS, patterns);
