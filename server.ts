@@ -17,6 +17,7 @@ import {
   ASSISTANT_PREFILL_TAG,
   parseRepairedTacticalOutput,
   consultarArbolPorRamaYNodo,
+  obtenerHechoDosificadoSinRepetir,
 } from "./src/lib/baseContext";
 import { consolidarNodosPatronesPorPunteros, construirArbolDesdeDatos } from "./src/lib/storage";
 import { FichaVivenciaInmutable, RamaTematica, Conversation } from "./src/types";
@@ -489,12 +490,18 @@ Responde únicamente con el objeto JSON válido.`;
       ramaActiva
     );
 
+    const hechoDosificadoTexto = obtenerHechoDosificadoSinRepetir(
+      messages || [],
+      ultimoMensajeUsuario
+    );
+
     // FASE 3: Prompt de Inferencia Final Reparado con Bloqueo Contrastivo (<analisis_contextual> + <consejo_tactico>)
     const systemInstruction = buildRepairedSystemPrompt({
       ramaActiva,
       tagsDetectados,
       hiloRecienteTexto,
       fichasCompactasTexto,
+      hechoDosificadoTexto,
     });
 
     const geminiKey = getGeminiKey(req);

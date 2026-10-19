@@ -514,64 +514,171 @@ export const MODULOS_NARRATIVOS_REUTILIZABLES: ModuloNarrativoPersuasivo[] = [
   }
 ];
 
+export interface HechoRealAncla {
+  id: string;
+  situaciones: Array<"capacidad_estudio" | "constancia_fisica" | "desinhibicion_social" | "autocontrol_ira" | "adaptacion_imprevistos">;
+  relato_corto: string;
+}
+
+// Banco extensible: aca se pueden agregar todos los hechos futuros por situacion
+export const BANCO_HECHOS_POR_SITUACION: HechoRealAncla[] = [
+  {
+    id: "HECHO-FISICA3-HERMANA",
+    situaciones: ["capacidad_estudio"],
+    relato_corto: "Cuando vivias en lo de tu hermana y promocionaste Fisica 3: mientras la mayoria abandonaba, vos te sentabas concentrado, ibas a todas las consultas con la profesora hasta entender todo y volvias a liquidar los practicos.",
+  },
+  {
+    id: "HECHO-ENTRENO-AURICULARES",
+    situaciones: ["constancia_fisica", "capacidad_estudio"],
+    relato_corto: "La epoca en que entrenabas todos los dias sin importar como venia el dia: te calzabas los auriculares y cumplias levantando la barra, haciendo espalda, hombros y abdominales sintiendo el calor y la fuerza en el cuerpo.",
+  },
+  {
+    id: "HECHO-BAR-RUBIO",
+    situaciones: ["desinhibicion_social"],
+    relato_corto: "La noche en el bar cuando fuiste a la barra con total determinacion, dijiste que eras capaz de encarar a cualquiera, te acercaste sin pensarlo al pibe rubio de ojos azules, hablaste suelto y terminaste rechazando su invitacion al departamento.",
+  },
+  {
+    id: "HECHO-BAILE-LUCHO-ARTUR",
+    situaciones: ["desinhibicion_social"],
+    relato_corto: "Cuando salias a bailar con Lucho o caminabas por Artur totalmente desinhibido, sonriendo sin esperar nada, haciendo contacto visual y hablando espontaneamente porque te daba igual el resultado.",
+  },
+  {
+    id: "HECHO-CASA-RENAN",
+    situaciones: ["autocontrol_ira", "adaptacion_imprevistos"],
+    relato_corto: "El aprendizaje de lo de Renan despues de un dia agotador: entender la diferencia entre explotar en caliente por una tonteria o congelar todo al primer insulto, respirar como un leon calmando su ira y elegir no darle importancia.",
+  },
+];
+
+/**
+ * Selecciona como maximo 1 hecho real que NO haya sido mencionado en los ultimos
+ * mensajes de la conversacion, o devuelve bloqueo si ya se cito uno en el turno anterior
+ * para no desgastar las experiencias reales.
+ */
+export function obtenerHechoDosificadoSinRepetir(
+  messages: Array<{ sender?: string; role?: string; text?: string; content?: string }>,
+  textoUsuario: string
+): string {
+  const ultimosMensajesAsistente = (messages || [])
+    .filter((m) => m.sender === "assistant" || m.role === "assistant")
+    .slice(-4)
+    .map((m) => (m.text || m.content || "").toLowerCase());
+
+  // Si en el ultimo mensaje de la IA ya se cito un caso real ("acordate", "fisica 3", "lucho", "renan", "rubio", "hermana"),
+  // en este turno NO inyectamos ningun hecho pasado para no quemar el recurso.
+  const ultimoAsistente = ultimosMensajesAsistente[ultimosMensajesAsistente.length - 1] || "";
+  const palabrasAncla = ["fisica 3", "física 3", "hermana", "rubio", "lucho", "artur", "renan", "renán", "auriculares"];
+  if (palabrasAncla.some((p) => ultimoAsistente.includes(p))) {
+    return "NINGUNO EN ESTE TURNO (PROHIBIDO citar casos pasados como Fisica 3, el bar, Lucho o Renan en esta respuesta; enfocate 100% en desenmascarar el autoengano actual y guiar la accion en presente).";
+  }
+
+  // Filtrar hechos que NO hayan aparecido en los ultimos 4 turnos del asistente
+  const textoHistorialReciente = ultimosMensajesAsistente.join(" ");
+  const hechosDisponibles = BANCO_HECHOS_POR_SITUACION.filter((h) => {
+    if (h.id === "HECHO-FISICA3-HERMANA" && (textoHistorialReciente.includes("fisica") || textoHistorialReciente.includes("hermana"))) return false;
+    if (h.id === "HECHO-ENTRENO-AURICULARES" && textoHistorialReciente.includes("auriculares")) return false;
+    if (h.id === "HECHO-BAR-RUBIO" && textoHistorialReciente.includes("rubio")) return false;
+    if (h.id === "HECHO-BAILE-LUCHO-ARTUR" && (textoHistorialReciente.includes("lucho") || textoHistorialReciente.includes("artur"))) return false;
+    if (h.id === "HECHO-CASA-RENAN" && textoHistorialReciente.includes("renan")) return false;
+    return true;
+  });
+
+  if (hechosDisponibles.length === 0) {
+    return "NINGUNO EN ESTE TURNO (No repitas ejemplos pasados; usa persuasion directa en tiempo presente).";
+  }
+
+  const t = textoUsuario.toLowerCase();
+  let elegido = hechosDisponibles[0];
+
+  if (t.includes("enojo") || t.includes("caliente") || t.includes("insult") || t.includes("discusion") || t.includes("pelea")) {
+    elegido = hechosDisponibles.find((h) => h.id === "HECHO-CASA-RENAN") || elegido;
+  } else if (t.includes("boliche") || t.includes("encarar") || t.includes("chica") || t.includes("social") || t.includes("aceptacion") || t.includes("ropa")) {
+    elegido = hechosDisponibles.find((h) => h.situaciones.includes("desinhibicion_social")) || elegido;
+  } else if (t.includes("entrenar") || t.includes("gimnasio") || t.includes("fisico") || t.includes("cuerpo")) {
+    elegido = hechosDisponibles.find((h) => h.id === "HECHO-ENTRENO-AURICULARES") || elegido;
+  } else {
+    elegido = hechosDisponibles.find((h) => h.situaciones.includes("capacidad_estudio")) || elegido;
+  }
+
+  return `[OPCIONAL - SOLO USAR SI APORTA FUERZA Y CON NATURALIDAD]: ${elegido.relato_corto}`;
+}
+
+export const MAPA_AUTOENGANO_E_INSTINTOS = `
+COMO DETECTAR CUANDO LA MENTE O LOS INSTINTOS PRIMITIVOS ENGANAN A JUAN SIN QUE SE DE CUENTA:
+
+1. EL ENGANO DEL "PERMITIDO CORTO" Y LA POSTERGACION ("Un video mas", "Despues de esta partida", "Ya es tarde, manana arranco temprano"):
+   - Como te engana la mente: Te hace creer que estas eligiendo descansar "5 minutos" o que "manana con la mente fresca vas a rendir mejor", cuando en realidad es ese impulso interno que te adormece para escapar de los primeros 10 minutos incomodos de una tarea o examen.
+   - Como destrabarlo (Narracion de Disciplina Real):
+     * Desenmascarar la voz permisiva en el acto: "Todo tiene su momento".
+     * Recordar que solo los primeros 10 o 15 minutos dan resistencia; una vez que arrancas ("primero esto, despues lo otro"), el ritmo fluye solo.
+     * Las pausas y series no se prohiben, se miden con temporizador y se cortan a horario para dormir a las 11 y levantarse al sonar la alarma sin esperar a tener ganas.
+
+2. EL ENGANO DE LA IRRITACION POR EL ESCENARIO IMPERFECTO (Caso "No tengo ropa 15 min antes de salir" o "Se cayo el plan del sabado"):
+   - Como te engana la mente: Te hace sentir bronca, ansiedad o ganas de mandar todo al diablo porque la ropa te queda mal, esta sucia o tus amigos cancelaron, haciendote creer que el problema es la ropa o el plan. En realidad, el instinto primitivo buscaba lucirse, recibir aprobacion externa o controlar un escenario ideal.
+   - Como destrabarlo (Buscar lo ideal dentro de la imperfeccion):
+     * Parar, mirar hacia adentro, respirar lento y quitarle toda importancia a la sensacion primitiva: "Las cosas solo me afectan si yo les doy importancia; yo decido que es relevante y que ignorar".
+     * Soltar el plan rigido y buscar la mejor opcion real dentro de lo que hay hoy: ir con la mejor ropa que tengas a mano porque tu tranquilidad vale mas que impresionar, o si estas agotado un sabado y todo salio al reves, elegir descansar en paz para ganar la manana siguiente en vez de forzar la salida con mala energia.
+
+3. EL ENGANO DE LA EXPLOSION REACTIVA EN CALIENTE (Caso "Cansado y te provocan o insultan"):
+   - Como te engana la mente: Cuando estas agotado y alguien se enoja por una tonteria, el instinto primitivo te empuja a explotar creyendo que asi te defendes, dejandote contaminado y frustrado.
+   - Como destrabarlo (Respiracion del Leon):
+     * Apenas sube el calor del enojo, congelar todo: dejar de escuchar la provocacion, no responder en caliente y respirar lento como un leon calmando su ira.
+     * Volverte inmune desde adentro filtrando lo irrelevante: vos elegis que te afecta y cuando avanzar o retroceder.
+
+4. EL ENGANO DE ESPERAR CONDICIONES O GANAS IDEALES (En estudio, orden, interaccion social o entrenamiento):
+   - Como te engana la mente: Te dice que necesitas "sentir ganas", "estar inspirado" o "tener todo claro" antes de entrenar, ordenar un desastre o hablarle a alguien en un boliche.
+   - Como destrabarlo:
+     * En el desorden o estudio: empezar a ordenar o ver el panorama general sin hacer juicios de valor ("que desastre todo lo que falta"), simplificando cada paso hasta que aparezca esa energia calida de concentracion.
+     * En el entrenamiento: no verlo como un castigo ni esperar a tener que demostrar nada; poner musica, empezar a calentar despacio adaptandolo a lo que hoy es posible y disfrutar de estar cuidando el cuerpo, sabiendo que con cada repeticion suben las ganas y la fuerza.
+     * En lo social: no esperar reacciones ni resultados; acercarte con una pregunta simple y casual solo por practicar y divertirte, siendo un alma libre a la que le da igual si sale bien o mal.
+`;
+
 /**
  * FASE 3: PROMPT DE INFERENCIA FINAL REPARADO
- * Integra la poda de ramas, la memoria del hilo activo y el anclaje estricto en vivencias pasadas reales.
+ * Integra la poda de ramas, la memoria del hilo activo, el detector de autoengaño y la dosificación estricta de hechos reales.
  */
 export function buildRepairedSystemPrompt(params: {
   ramaActiva: RamaTematica;
   tagsDetectados: string[];
   hiloRecienteTexto: string;
   fichasCompactasTexto: string;
+  hechoDosificadoTexto?: string;
 }): string {
-  const modulosRama = MODULOS_NARRATIVOS_REUTILIZABLES.filter(
-    (m) =>
-      m.rama_id === params.ramaActiva ||
-      m.tags_activacion.some((t) => params.tagsDetectados.includes(t))
-  );
+  return `Sos la voz mas lucida, persuasiva y despierta de Juan Francisco Cano. Hablas de vos a vos (voseo argentino directo, claro y firme).
 
-  const modulosTexto = modulosRama
-    .map(
-      (m) => `[MODULO ${m.id}]
-- Trampa que desarma: ${m.trampa_detectada}
-- Preguntas persuasivas: ${m.preguntas_desarme.join(" / ")}
-- Frases de poder: ${m.frases_control_interno.join(" / ")}
-- Accion viva (sin usar titulos): ${m.accion_viva_sin_titulo}
-- Guion en presente: ${m.guion_actitud_presente}
-- Anclas reales de Juan: ${m.anclas_reales_exito.join(" | ")}`
-    )
-    .join("\n\n");
+<detector_de_autoengano_e_instintos_primitivos>
+${MAPA_AUTOENGANO_E_INSTINTOS}
+</detector_de_autoengano_e_instintos_primitivos>
 
-  return `Sos la voz mas lucida, persuasiva y confrontativa de Juan Francisco Cano. Hablas de vos a vos (voseo argentino directo, firme y cercano).
-
-<modulos_de_convencimiento_y_anclas_reales>
-${modulosTexto}
-</modulos_de_convencimiento_y_anclas_reales>
-
-<experiencias_pasadas_del_arbol>
+<experiencias_del_arbol>
 ${params.fichasCompactasTexto}
-</experiencias_pasadas_del_arbol>
+</experiencias_del_arbol>
+
+<hecho_real_habilitado_en_este_turno>
+${params.hechoDosificadoTexto || "NINGUNO EN ESTE TURNO (No cites casos pasados en este mensaje; usa persuasion directa en presente)."}
+</hecho_real_habilitado_en_este_turno>
 
 <hilo_reciente>
 ${params.hiloRecienteTexto}
 </hilo_reciente>
 
 REGLAS INQUEBRANTABLES DE RESPUESTA:
-1. PROHIBIDO ASUMIR CONTEXTO NO DICHO: NO inventes ni asumas que hora es ("son las 5 de la tarde"), donde esta Juan hoy, que nota se saco ni que esta haciendo ahora mismo si el no lo dijo en su mensaje actual.
-2. CERO PALABRAS TECNICAS: Prohibido usar jerga como "rumiando", "sistema limbico", "corteza prefrontal", "valle circadiano", "sesgo" o "asimetria". Habla claro y simple: "perder el tiempo dandole vueltas", "armarte una pelicula", "darte permitidos".
-3. PROHIBIDO MENCIONAR TITULOS DE TECNICAS: Jamas nombres etiquetas como "Metodo Yo Robot", "Grado de Libertad", "Franja Dorada", "Metodo Transicion", "Dia No Cero" ni "52/17". Describe siempre la accion viva (ej. en vez de decir "usa Yo Robot", deci "respira y actua como un robot que no siente nada, solo lo hace"; en vez de "Grado de Libertad", deci "si sale mal, al carajo, vos tenes el control de lo que sentis").
-4. PERSUASION Y DUDA ANTE LO NEGATIVO: Si Juan dice algo negativo sobre el ("soy mediocre", "nunca sobresalgo", "no puedo"), ponelo en duda con argumentos implacables usando sus propias victorias reales de <modulos_de_convencimiento_y_anclas_reales> (cuando promociono Fisica 3 yendo a todas las consultas en lo de su hermana, cuando entrenaba todos los dias con auriculares, cuando encaro al rubio de ojos azules en la barra y lo rechazo, o cuando salia con Lucho y en Artur totalmente suelto).
-5. CAMBIO DE ENFOQUE SI INSISTE: Revisa <hilo_reciente>. Si Juan insiste con lo mismo, NO repitas el mismo discurso ni la misma accion: cambia de angulo (usa el guion en segunda persona presente para hacerle sentir la postura en el cuerpo, o proponele una dinamica nueva y distinta si ya usaste las anteriores).
-6. FORMATO LIMPIO: Oculta tu razonamiento en <analisis_contextual> y escribe en <consejo_tactico> entre 2 y 3 parrafos de prosa fluida, sin asteriscos (**), sin listas numeradas y sin subtitulos.
+1. DESENMASCARAR EL AUTOENGANO INVISIBLE: Cuando Juan hable de falta de disciplina, postergacion, desgano, enojo o inseguridad, mostrale con claridad como su propia mente o sus instintos primitivos lo estan tratando de enganar sin que se de cuenta (con la trampa del "permitido corto", el "manana empiezo temprano", la bronca por buscar aprobacion o esperar condiciones ideales).
+2. DOSIFICACION ESTRICTA DE CASOS REALES (PROHIBIDO REPETIR):
+   - Mira <hecho_real_habilitado_en_este_turno>. Si dice "NINGUNO EN ESTE TURNO", tenes TERMINANTEMENTE PROHIBIDO nombrar Fisica 3, la casa de su hermana, el rubio del bar, Lucho, Artur o Renan.
+   - Incluso cuando haya un hecho habilitado, usalo solo si realmente suma fuerza al argumento, sin meterlo con calzador en todas las charlas.
+3. PROHIBIDO ASUMIR EL CONTEXTO ACTUAL: No inventes que hora es ("son las 5 de la tarde"), donde esta Juan hoy ni que esta haciendo ahora mismo si el no lo dijo en su mensaje actual.
+4. CERO PALABRAS TECNICAS Y CERO TITULOS DE METODOS: Prohibido decir "rumiando", "sistema limbico", "corteza prefrontal", "valle circadiano", "Metodo Yo Robot", "Grado de Libertad", "Metodo Transicion", "Franja Dorada" o "Ideal Adaptado". Explica siempre la accion viva con palabras simples ("perder el tiempo dandole vueltas", "respira como un leon calmando su ira", "actua como un robot que no siente nada y solo arranca", "busca la mejor opcion dentro de lo que hay hoy aunque no sea perfecto", "si sale mal, al carajo, vos determinas que es relevante y que ignorar").
+5. ROTACION DE ENFOQUE SI INSISTE: Si en <hilo_reciente> Juan insiste con lo mismo, cambia por completo el angulo (pasa de mostrarle la trampa mental -> a guiarlo en segunda persona presente sintiendo la postura y la respiracion -> o a darle un paso pequeno con temporizador para los primeros 10 minutos).
+6. FORMATO LIMPIO: Razonamiento oculto en <analisis_contextual> y respuesta visible en <consejo_tactico> escrita en 2 a 3 parrafos de prosa conversacional fluida, sin asteriscos (**), sin listas numeradas y sin subtitulos.
 
 ESTRUCTURA DE SALIDA OBLIGATORIA:
 <analisis_contextual>
-- Continuidad y cambio de enfoque: [Que dijo Juan hoy sin asumir contexto extra y que enfoque usar para no repetir]
-- Ancla o modulo activado: [Que victoria pasada o modulo se usa]
+- Autoengano o instinto detectado: [Que excusa o impulso invisible esta operando]
+- Enfoque elegido y control de repeticion: [Por que este angulo es distinto al turno anterior]
 </analisis_contextual>
 
 <consejo_tactico>
-[Respuesta persuasiva, desafiante y natural en voseo argentino, sin jerga tecnica, sin titulos de metodos y sin asteriscos.]
+[Tu respuesta persuasiva y natural en voseo argentino, desenmascarando el autoengano y guiando la accion inmediata sin asteriscos ni nombres de tecnicas.]
 </consejo_tactico>`;
 }
 
@@ -579,7 +686,7 @@ ESTRUCTURA DE SALIDA OBLIGATORIA:
  * Prefill obligatorio del asistente para forzar la apertura con <analisis_contextual>
  * eliminando saludos complacientes y activando el bloqueo contrastivo antes del consejo.
  */
-export const ASSISTANT_PREFILL_TAG = "<analisis_contextual>\n- Continuidad y cambio de enfoque:";
+export const ASSISTANT_PREFILL_TAG = "<analisis_contextual>\n- Autoengano o instinto detectado:";
 
 /**
  * Parsea la salida estructurada (<analisis_contextual> + <consejo_tactico>)
@@ -618,13 +725,13 @@ export function parseRepairedTacticalOutput(
     return m && m[1] ? m[1].trim() : fallback;
   };
 
-  const continuidad = extractLine(
-    /-\s*Continuidad(?:\s*y\s*cambio\s*de\s*enfoque)?:\s*([^\n]+)/i,
+  const autoenganoOContinuidad = extractLine(
+    /-\s*(?:Autoengano\s*o\s*instinto\s*detectado|Continuidad(?:\s*y\s*cambio\s*de\s*enfoque)?):\s*([^\n]+)/i,
     "Evaluación directa sobre consulta activa."
   );
-  const consejoGenericoDescartado = extractLine(
-    /-\s*Consejo gen[eé]rico descartado:\s*([^\n]+)/i,
-    "Consejo abstracto o complaciente descartado."
+  const enfoqueElegido = extractLine(
+    /-\s*(?:Enfoque\s*elegido\s*y\s*control\s*de\s*repeticion|Consejo\s*gen[eé]rico\s*descartado):\s*([^\n]+)/i,
+    "Enfoque persuasivo en tiempo presente."
   );
   const patronDetectado = extractLine(
     /-\s*(?:Patr[oó]n detectado|Ancla o modulo activado):\s*([^\n]+)/i,
@@ -644,8 +751,8 @@ export function parseRepairedTacticalOutput(
   return {
     formattedMessage,
     tacticalAnalysis: {
-      continuidad,
-      consejoGenericoDescartado,
+      continuidad: autoenganoOContinuidad,
+      consejoGenericoDescartado: enfoqueElegido,
       patronDetectado,
       consejoTactico,
       ramaDetectada,

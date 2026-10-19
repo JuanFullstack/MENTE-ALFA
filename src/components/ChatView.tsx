@@ -62,6 +62,7 @@ import {
   ASSISTANT_PREFILL_TAG,
   parseRepairedTacticalOutput,
   consultarArbolPorRamaYNodo,
+  obtenerHechoDosificadoSinRepetir,
 } from "../lib/baseContext";
 import { 
   getStoredGroqApiKey, 
@@ -716,11 +717,17 @@ ${textToSummarize}`;
         const fichasCompactasTexto = formatearFichasInmutablesCompactas(fichasPodadas, ramaActiva);
         const hiloRecienteTexto = construirHiloActivoTexto(activeThreadMsgs, decisions, currentState, ramaActiva);
 
+        const hechoDosificadoTexto = obtenerHechoDosificadoSinRepetir(
+          activeThreadMsgs,
+          userText
+        );
+
         const systemInstruction = buildRepairedSystemPrompt({
           ramaActiva,
           tagsDetectados,
           hiloRecienteTexto,
           fichasCompactasTexto,
+          hechoDosificadoTexto,
         });
 
         const convHistory = activeThreadMsgs
