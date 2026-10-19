@@ -19,9 +19,10 @@ import {
   RamaTematica,
   NodoMecanismoArbol,
   RamaArbolMemoria,
-  ArbolMemoriaJerarquico
+  ArbolMemoriaJerarquico,
+  ModuloNarrativoPersuasivo
 } from "../types";
-import { RAW_BASE_CONTEXT, asegurarFichaInmutable, GUIAS_BASE_POR_RAMA, detectarRamaYTags } from "./baseContext";
+import { RAW_BASE_CONTEXT, asegurarFichaInmutable, GUIAS_BASE_POR_RAMA, detectarRamaYTags, MODULOS_NARRATIVOS_REUTILIZABLES } from "./baseContext";
 
 // Keys for local storage
 const KEYS = {
@@ -38,6 +39,7 @@ const KEYS = {
   SISTEMA_MENTAL: "zen_ai_sistema_mental",
   ACTIVE_CONVERSATION_ID: "zen_ai_active_conv_id",
   ARBOL_MEMORIA: "zen_ai_arbol_memoria_v2",
+  MODULOS_NARRATIVOS: "zen_ai_modulos_narrativos_v1",
 };
 
 export interface UserProfile {
@@ -908,6 +910,13 @@ export const ZenDB = {
     return arbol;
   },
 
+  getModulosNarrativos(): ModuloNarrativoPersuasivo[] {
+    return getLocalStorage<ModuloNarrativoPersuasivo[]>(KEYS.MODULOS_NARRATIVOS, MODULOS_NARRATIVOS_REUTILIZABLES);
+  },
+  setModulosNarrativos(modulos: ModuloNarrativoPersuasivo[]): void {
+    setLocalStorage(KEYS.MODULOS_NARRATIVOS, modulos);
+  },
+
   clearAll(): void {
     localStorage.removeItem(KEYS.USER_PROFILE);
     localStorage.removeItem(KEYS.CONVERSATIONS);
@@ -922,6 +931,7 @@ export const ZenDB = {
     localStorage.removeItem(KEYS.SISTEMA_MENTAL);
     localStorage.removeItem(KEYS.ACTIVE_CONVERSATION_ID);
     localStorage.removeItem(KEYS.ARBOL_MEMORIA);
+    localStorage.removeItem(KEYS.MODULOS_NARRATIVOS);
   }
 };
 

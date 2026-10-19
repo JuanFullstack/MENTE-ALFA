@@ -75,6 +75,18 @@ export interface ArbolMemoriaJerarquico {
   indiceTransversalTags: Record<string, string[]>;     // Tag -> Array de IDs en cualquier rama (para analogías)
 }
 
+export interface ModuloNarrativoPersuasivo {
+  id: string;
+  rama_id: RamaTematica;
+  tags_activacion: string[];
+  trampa_detectada: string;          // El loop o mentira mental que se cuenta
+  preguntas_desarme: string[];       // Preguntas para poner en duda lo negativo
+  frases_control_interno: string[];  // Frases de poder ("Vos tenes el control de lo que sentis")
+  accion_viva_sin_titulo: string;    // Instruccion directa sin nombrar tecnicas
+  guion_actitud_presente: string;    // Visualizacion en 2da persona presente
+  anclas_reales_exito: string[];     // Hechos reales pasados de Juan que prueban su capacidad
+}
+
 // Estado del Hilo Activo (Continuidad reciente por rama)
 export interface HiloActivo {
   id: string; // ej: "HILO-45"
