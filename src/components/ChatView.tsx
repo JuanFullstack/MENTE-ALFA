@@ -167,7 +167,9 @@ export default function ChatView({
     setGuardandoEnArbolId(assistantMsg.id);
     try {
       const idx = currentMessages.findIndex((m) => m.id === assistantMsg.id);
-      const userMsgPrevio = idx > 0 ? currentMessages[idx - 1] : null;
+      const userMsgPrevio = idx >= 0
+        ? currentMessages.slice(0, idx).reverse().find((m) => m.sender === "user") || null
+        : null;
       const relatoCompleto = userMsgPrevio
         ? `Situacion/Consulta: ${userMsgPrevio.text}\nRespuesta/Accion tactica: ${assistantMsg.text}`
         : assistantMsg.text;
@@ -562,6 +564,9 @@ ${textToSummarize}`;
         const renamed = updatedConvs.map((c) => (c.id === activeConversationId ? { ...c, title: autoTitle } : c));
         onUpdateConversations(renamed);
         ZenDB.setConversations(renamed);
+        ZenDB.sincronizarArbolMemoria(memories, renamed, strategies);
+      } else {
+        ZenDB.sincronizarArbolMemoria(memories, updatedConvs, strategies);
       }
 
     } catch (err: any) {
