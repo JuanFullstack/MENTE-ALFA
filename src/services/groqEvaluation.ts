@@ -31,6 +31,60 @@ export const FALLBACK_GROQ_MODEL = "llama-3.1-8b-instant";
 export const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 const DEFAULT_GROQ_API_KEY = "";
 
+export const DEFAULT_GEMINI_API_KEY = "";
+
+/**
+ * Obtiene la clave de Google AI Studio (Gemini) almacenada en el navegador o en variables Vite.
+ */
+export function getStoredGeminiApiKey(): string {
+  if (typeof window !== "undefined") {
+    const local = localStorage.getItem("gemini_api_key");
+    if (local && local.trim()) return local.trim();
+  }
+  const envKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
+  if (envKey && typeof envKey === "string" && envKey.trim()) return envKey.trim();
+  return DEFAULT_GEMINI_API_KEY;
+}
+
+/**
+ * Guarda la clave de Google AI Studio en localStorage.
+ */
+export function setStoredGeminiApiKey(key: string): void {
+  if (typeof window !== "undefined") {
+    if (key.trim()) {
+      localStorage.setItem("gemini_api_key", key.trim());
+    } else {
+      localStorage.removeItem("gemini_api_key");
+    }
+  }
+}
+
+/**
+ * Valida una clave API de Google AI Studio realizando una consulta mínima de prueba.
+ */
+export async function testGeminiKey(apiKey: string): Promise<{ success: boolean; message: string }> {
+  if (!apiKey || !apiKey.trim()) {
+    return { success: false, message: "La clave API de Google AI Studio no puede estar vacía." };
+  }
+
+  const trimmedKey = apiKey.trim();
+  try {
+    const srvRes = await fetch("/api/gemini/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: trimmedKey }),
+    });
+
+    const srvData = await srvRes.json().catch(() => ({}));
+    if (srvRes.ok && srvData.success) {
+      return { success: true, message: srvData.message || "¡Conexión exitosa con Google AI Studio (Gemini)!" };
+    }
+    return { success: false, message: srvData.message || `Error al validar clave (${srvRes.status})` };
+  } catch (err: any) {
+    return { success: false, message: err.message || "Error al conectar con el servidor para validar Google AI Studio." };
+  }
+}
+
 /**
  * Obtiene la clave de Groq almacenada en el navegador o en variables de entorno Vite.
  */

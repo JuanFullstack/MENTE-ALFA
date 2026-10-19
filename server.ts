@@ -17,25 +17,64 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Initialize GoogleGenAI lazily and safely
-let aiClient: GoogleGenAI | null = null;
+function getGeminiKey(req?: express.Request): string | null {
+  const headerKey = req?.headers["x-gemini-api-key"];
+  if (typeof headerKey === "string" && headerKey.trim()) return headerKey.trim();
+  const envKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  if (envKey && envKey.trim() && !envKey.includes("MY_GEMINI")) return envKey.trim();
+  return null;
+}
 
-function getAI(): GoogleGenAI {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY no está configurada en las variables de entorno.");
-    }
-    aiClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
+const GEMINI_MODELS = [
+  "gemini-flash-lite-latest",
+  "gemini-3.8-flash",
+  "gemini-flash-latest",
+  "gemini-3.7-flash",
+];
+
+async function callGemini(options: {
+  apiKey: string;
+  systemInstruction?: string;
+  contents: any;
+  responseMimeType?: string;
+}): Promise<string> {
+  const ai = new GoogleGenAI({
+    apiKey: options.apiKey,
+    httpOptions: {
+      headers: {
+        "User-Agent": "aistudio-build",
       },
-    });
+    },
+  });
+
+  let lastError: any = null;
+  for (const modelName of GEMINI_MODELS) {
+    try {
+      const config: any = {};
+      if (options.systemInstruction) {
+        config.systemInstruction = options.systemInstruction;
+      }
+      if (options.responseMimeType) {
+        config.responseMimeType = options.responseMimeType;
+      }
+
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: options.contents,
+        config: Object.keys(config).length > 0 ? config : undefined,
+      });
+
+      const text = response.text;
+      if (text && text.trim().length > 0) {
+        return text;
+      }
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`[Gemini Primary] Modelo ${modelName} falló, intentando siguiente:`, err.message);
+    }
   }
-  return aiClient;
+
+  throw lastError || new Error("No se pudo obtener respuesta de Google AI Studio (Gemini).");
 }
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -156,6 +195,29 @@ async function callGroqChat(
   throw lastError || new Error("No se pudo obtener respuesta de ningún modelo de Groq.");
 }
 
+// Endpoint para validar conexión con Google AI Studio (Gemini) desde Backend
+app.post("/api/gemini/test", async (req, res) => {
+  try {
+    const key = req.body?.apiKey || getGeminiKey(req);
+    if (!key) {
+      return res.status(400).json({ success: false, message: "No se proporcionó una clave API de Google AI Studio." });
+    }
+
+    const ai = new GoogleGenAI({ apiKey: key.trim() });
+    const response = await ai.models.generateContent({
+      model: "gemini-flash-lite-latest",
+      contents: "ping",
+    });
+
+    if (response && response.text) {
+      return res.json({ success: true, message: "¡Conexión exitosa con Google AI Studio (Gemini)!" });
+    }
+    return res.status(500).json({ success: false, message: "Respuesta vacía de Google AI Studio." });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, message: err.message || "Error al conectar con Google AI Studio." });
+  }
+});
+
 // Endpoint para validar conexión con Groq desde Backend
 app.post("/api/groq/test", async (req, res) => {
   try {
@@ -202,14 +264,16 @@ app.post("/api/groq/test", async (req, res) => {
 
 // Health check endpoint
 app.get("/api/health", (req, res) => {
+  const geminiKey = getGeminiKey(req);
   const groqKey = getGroqKey(req);
-  const hasGemini = !!process.env.GEMINI_API_KEY;
   res.json({
     status: "ok",
+    hasGeminiApiKey: !!geminiKey,
     hasGroqApiKey: !!groqKey,
-    hasGeminiApiKey: hasGemini,
-    hasApiKey: !!groqKey || hasGemini,
-    defaultProvider: groqKey ? "groq" : hasGemini ? "gemini" : "none",
+    hasApiKey: !!geminiKey || !!groqKey,
+    primaryProvider: "google-ai-studio",
+    secondaryProvider: "groq",
+    defaultProvider: geminiKey ? "gemini" : groqKey ? "groq" : "none",
   });
 });
 
@@ -388,70 +452,79 @@ Responde estrictamente en formato JSON válido con este esquema:
 }
 `;
 
+    const geminiKey = getGeminiKey(req);
     const groqKey = getGroqKey(req);
 
-    // 1. Usar Groq si la clave está disponible
-    if (groqKey) {
-      const recentMessages = (messages || []).slice(-8);
-      const groqMessages = [
-        { role: "system", content: systemInstruction },
-        ...recentMessages.map((m: any) => ({
-          role: m.sender === "user" ? "user" : "assistant",
-          content: m.text,
-        })),
-      ];
+    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL
+    if (geminiKey) {
+      try {
+        const recentMessages = (messages || []).slice(-10);
+        let conversationContents = recentMessages.map((m: any) => ({
+          role: m.sender === "user" ? "user" : "model",
+          parts: [{ text: m.text }],
+        }));
 
-      const content = await callGroqChat(groqMessages, {
-        apiKey: groqKey,
-        model: getGroqModel(req),
-        jsonMode: true,
-        temperature: 0.6,
-        max_tokens: 1500,
-      });
+        if (conversationContents.length === 0) {
+          conversationContents = [{ role: "user", parts: [{ text: "Hola" }] }];
+        } else if (conversationContents[0].role !== "user") {
+          conversationContents.unshift({ role: "user", parts: [{ text: "Hola" }] });
+        }
 
-      const parsed = cleanAndParseJSON(content, {
-        message: content || "Te escucho con atención.",
-        energyLevel: 7,
-      });
-
-      return res.json(parsed);
-    }
-
-    // 2. Fallback a Gemini si está configurado
-    if (process.env.GEMINI_API_KEY) {
-      const ai = getAI();
-      const conversationContents = messages.map((m: any) => ({
-        role: m.sender === "user" ? "user" : "model",
-        parts: [{ text: m.text }],
-      }));
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: conversationContents,
-        config: {
+        const resultText = await callGemini({
+          apiKey: geminiKey,
           systemInstruction,
+          contents: conversationContents,
           responseMimeType: "application/json",
-        },
-      });
+        });
 
-      const resultText = response.text || "{}";
-      return res.json(cleanAndParseJSON(resultText, {
-        message: resultText,
-        detectedState: { tags: ["Enfoque"], description: "Interacción procesada." },
-        suggestedMemory: "",
-        suggestedDecision: null,
-        suggestedStrategy: null,
-        suggestedStateUpdate: null,
-        energyLevel: 7,
-      }));
+        const parsed = cleanAndParseJSON(resultText, {
+          message: resultText || "Te escucho con atención.",
+          energyLevel: 7,
+        });
+
+        return res.json(parsed);
+      } catch (geminiErr: any) {
+        console.warn("[Chat] Fallo en Gemini Primario, recurriendo a Groq como respaldo:", geminiErr.message);
+      }
     }
 
-    // 3. Si no hay ninguna clave configurada
+    // 2. Groq Cloud AI como OPCIÓN SECUNDARIA (Respaldo)
+    if (groqKey) {
+      try {
+        const recentMessages = (messages || []).slice(-8);
+        const groqMessages = [
+          { role: "system", content: systemInstruction },
+          ...recentMessages.map((m: any) => ({
+            role: m.sender === "user" ? "user" : "assistant",
+            content: m.text,
+          })),
+        ];
+
+        const content = await callGroqChat(groqMessages, {
+          apiKey: groqKey,
+          model: getGroqModel(req),
+          jsonMode: true,
+          temperature: 0.6,
+          max_tokens: 1500,
+        });
+
+        const parsed = cleanAndParseJSON(content, {
+          message: content || "Te escucho con atención.",
+          energyLevel: 7,
+        });
+
+        return res.json(parsed);
+      } catch (groqErr: any) {
+        console.warn("[Chat] Fallo también en Groq Secundario:", groqErr.message);
+      }
+    }
+
+    // 3. Si no hay ninguna clave configurada o ambas fallaron
     return res.json({
-      message: `Hola ${userName}. Para comenzar a conversar con ${companionName} con el sistema de 5 capas de memoria y Groq AI, ingresa tu **Groq API Key** en la pestaña de **Configuración** o en el archivo \`.env.local\`.`,
+      message: `Hola ${userName}. Para comenzar a conversar con ${companionName}, configura tu clave de **Google AI Studio (Gemini)** o **Groq Cloud** en la pestaña de **Configuración** o en el archivo \`.env.local\`.`,
       detectedState: {
         tags: ["Configuración Pendiente"],
-        description: "Se requiere configurar una clave de Groq API (gsk_...) para activar la IA.",
+        description: "Se requiere configurar una clave API de Google AI Studio o Groq para activar la IA.",
       },
       suggestedMemory: "",
       suggestedDecision: null,
@@ -509,50 +582,55 @@ Tu objetivo es estructurar el balance del día en un objeto JSON con el siguient
 }
 `;
 
+    const fallbackReport = {
+      goals: ["Sostener enfoque matutino"],
+      results: ["Jornada completada"],
+      problems: ["Ninguno crítico"],
+      decisions: ["Mantener franja 07:00 a 12:00"],
+      projectStatus: "En progreso",
+      observedPatterns: ["Mayor productividad matutina"],
+      generalNote: "Reporte generado satisfactoriamente.",
+    };
+
+    const geminiKey = getGeminiKey(req);
     const groqKey = getGroqKey(req);
-    if (groqKey) {
-      const content = await callGroqChat(
-        [
-          { role: "system", content: "Eres un sintetizador neuroconductual de reportes diarios de alto rendimiento." },
-          { role: "user", content: prompt },
-        ],
-        {
-          apiKey: groqKey,
-          model: getGroqModel(req),
-          jsonMode: true,
-          temperature: 0.2,
-          max_tokens: 2000,
-        }
-      );
-      const parsed = cleanAndParseJSON(content, {
-        goals: ["Sostener enfoque matutino"],
-        results: ["Jornada completada"],
-        problems: ["Ninguno crítico"],
-        decisions: ["Mantener franja 07:00 a 12:00"],
-        projectStatus: "En progreso",
-        observedPatterns: ["Mayor productividad matutina"],
-        generalNote: "Reporte generado satisfactoriamente.",
-      });
-      return res.json({ id: `rep-${Date.now()}`, date: reportDate, ...parsed, createdAt: new Date().toISOString() });
+
+    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL
+    if (geminiKey) {
+      try {
+        const text = await callGemini({
+          apiKey: geminiKey,
+          contents: prompt,
+          responseMimeType: "application/json",
+        });
+        const parsed = cleanAndParseJSON(text, fallbackReport);
+        return res.json({ id: `rep-${Date.now()}`, date: reportDate, ...parsed, createdAt: new Date().toISOString() });
+      } catch (geminiErr: any) {
+        console.warn("[Daily-Report] Fallo en Gemini Primario, recurriendo a Groq:", geminiErr.message);
+      }
     }
 
-    if (process.env.GEMINI_API_KEY) {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
-      });
-      const parsed = cleanAndParseJSON(response.text || "{}", {
-        goals: ["Sostener enfoque matutino"],
-        results: ["Jornada completada"],
-        problems: ["Ninguno crítico"],
-        decisions: ["Mantener franja 07:00 a 12:00"],
-        projectStatus: "En progreso",
-        observedPatterns: ["Mayor productividad matutina"],
-        generalNote: "Reporte generado con Gemini.",
-      });
-      return res.json({ id: `rep-${Date.now()}`, date: reportDate, ...parsed, createdAt: new Date().toISOString() });
+    // 2. Groq Cloud AI como OPCIÓN SECUNDARIA (Respaldo)
+    if (groqKey) {
+      try {
+        const content = await callGroqChat(
+          [
+            { role: "system", content: "Eres un sintetizador neuroconductual de reportes diarios de alto rendimiento." },
+            { role: "user", content: prompt },
+          ],
+          {
+            apiKey: groqKey,
+            model: getGroqModel(req),
+            jsonMode: true,
+            temperature: 0.2,
+            max_tokens: 2000,
+          }
+        );
+        const parsed = cleanAndParseJSON(content, fallbackReport);
+        return res.json({ id: `rep-${Date.now()}`, date: reportDate, ...parsed, createdAt: new Date().toISOString() });
+      } catch (groqErr: any) {
+        console.warn("[Daily-Report] Fallo también en Groq Secundario:", groqErr.message);
+      }
     }
 
     return res.json({
@@ -674,34 +752,45 @@ ESTRUCTURA DE SALIDA OBLIGATORIA (Utiliza estos encabezados exactos en Markdown)
 CONVERSACIÓN / VIVENCIA A ANALIZAR:
 ${textToSummarize}`;
 
+    const geminiKey = getGeminiKey(req);
     const groqKey = getGroqKey(req);
-    if (groqKey) {
-      const summary = await callGroqChat(
-        [
-          { role: "system", content: "Eres un sintetizador neuroconductual de alto rendimiento y analista de evolución personal." },
-          { role: "user", content: prompt },
-        ],
-        {
-          apiKey: groqKey,
-          model: getGroqModel(req),
-          temperature: 0.2,
-          max_tokens: 1500,
-        }
-      );
-      return res.json({ summary: cleanThinkTags(summary) });
+
+    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL
+    if (geminiKey) {
+      try {
+        const text = await callGemini({
+          apiKey: geminiKey,
+          contents: prompt,
+        });
+        return res.json({ summary: cleanThinkTags(text) });
+      } catch (geminiErr: any) {
+        console.warn("[Summarize] Fallo en Gemini Primario, recurriendo a Groq:", geminiErr.message);
+      }
     }
 
-    if (process.env.GEMINI_API_KEY) {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-      });
-      return res.json({ summary: cleanThinkTags(response.text || "Resumen no disponible.") });
+    // 2. Groq Cloud AI como OPCIÓN SECUNDARIA (Respaldo)
+    if (groqKey) {
+      try {
+        const summary = await callGroqChat(
+          [
+            { role: "system", content: "Eres un sintetizador neuroconductual de alto rendimiento y analista de evolución personal." },
+            { role: "user", content: prompt },
+          ],
+          {
+            apiKey: groqKey,
+            model: getGroqModel(req),
+            temperature: 0.2,
+            max_tokens: 1500,
+          }
+        );
+        return res.json({ summary: cleanThinkTags(summary) });
+      } catch (groqErr: any) {
+        console.warn("[Summarize] Fallo también en Groq Secundario:", groqErr.message);
+      }
     }
 
     return res.json({
-      summary: `⏰ [${timeRange || "Hoy"}] - Charla registrada con ${messages.length} mensajes. Ingresa tu Groq API Key en Configuración para resúmenes automáticos avanzados.`,
+      summary: `⏰ [${timeRange || "Hoy"}] - Charla registrada con ${messages.length} mensajes. Configura tu API Key en Configuración para resúmenes automáticos avanzados.`,
     });
   } catch (error: any) {
     console.error("Error en /api/summarize:", error);
@@ -741,30 +830,41 @@ ${existingContext || "Ninguna previa."}
 NOTA MENTAL A RESUMIR:
 "${noteText.trim()}"`;
 
+    const geminiKey = getGeminiKey(req);
     const groqKey = getGroqKey(req);
-    if (groqKey) {
-      const summary = await callGroqChat(
-        [
-          { role: "system", content: "Eres un sintetizador de conocimiento neuroconductual conciso y preciso." },
-          { role: "user", content: prompt },
-        ],
-        {
-          apiKey: groqKey,
-          model: getGroqModel(req),
-          temperature: 0.2,
-          max_tokens: 300,
-        }
-      );
-      return res.json({ summary: cleanThinkTags(summary).trim() });
+
+    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL
+    if (geminiKey) {
+      try {
+        const text = await callGemini({
+          apiKey: geminiKey,
+          contents: prompt,
+        });
+        return res.json({ summary: cleanThinkTags(text).trim() });
+      } catch (geminiErr: any) {
+        console.warn("[Summarize-Note] Fallo en Gemini Primario, recurriendo a Groq:", geminiErr.message);
+      }
     }
 
-    if (process.env.GEMINI_API_KEY) {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-      });
-      return res.json({ summary: cleanThinkTags(response.text || "").trim() });
+    // 2. Groq Cloud AI como OPCIÓN SECUNDARIA (Respaldo)
+    if (groqKey) {
+      try {
+        const summary = await callGroqChat(
+          [
+            { role: "system", content: "Eres un sintetizador de conocimiento neuroconductual conciso y preciso." },
+            { role: "user", content: prompt },
+          ],
+          {
+            apiKey: groqKey,
+            model: getGroqModel(req),
+            temperature: 0.2,
+            max_tokens: 300,
+          }
+        );
+        return res.json({ summary: cleanThinkTags(summary).trim() });
+      } catch (groqErr: any) {
+        console.warn("[Summarize-Note] Fallo también en Groq Secundario:", groqErr.message);
+      }
     }
 
     // Fallback: first 120 chars
@@ -854,73 +954,43 @@ Asegúrate de:
       frequentThemes: ["Enfoque diario", "Gestión del tiempo", "Claridad mental"],
     };
 
+    const geminiKey = getGeminiKey(req);
     const groqKey = getGroqKey(req);
-    if (groqKey) {
-      const content = await callGroqChat(
-        [
-          { role: "system", content: "Eres un neurocientífico analítico de datos de conducta y bienestar. Responde estrictamente en formato JSON." },
-          { role: "user", content: prompt },
-        ],
-        {
-          apiKey: groqKey,
-          model: getGroqModel(req),
-          jsonMode: true,
-          temperature: 0.2,
-          max_tokens: 3000,
-        }
-      );
-      return res.json(cleanAndParseJSON(content, fallbackAnalysis));
+
+    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL
+    if (geminiKey) {
+      try {
+        const text = await callGemini({
+          apiKey: geminiKey,
+          contents: prompt,
+          responseMimeType: "application/json",
+        });
+        return res.json(cleanAndParseJSON(text, fallbackAnalysis));
+      } catch (geminiErr: any) {
+        console.warn("[Analyze-Patterns] Fallo en Gemini Primario, recurriendo a Groq:", geminiErr.message);
+      }
     }
 
-    if (process.env.GEMINI_API_KEY) {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              mentalClarity: { type: Type.INTEGER, description: "Claridad mental estimada de 0 a 100." },
-              stressLevel: { type: Type.STRING, description: "'Bajo', 'Moderado' o 'Alto' basado en el estrés acumulado." },
-              correlations: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    type: { type: Type.STRING, description: "Debe ser estrictamente 'dato observado', 'asociación' o 'hipótesis'." },
-                    description: { type: Type.STRING, description: "Explicación del patrón o correlación en español." },
-                  },
-                  required: ["type", "description"],
-                },
-              },
-              weeklyHistory: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    day: { type: Type.STRING, description: "Abreviación del día (ej. 'Lun', 'Mar', 'Mie', 'Jue', 'Vie')." },
-                    motivation: { type: Type.NUMBER },
-                    stress: { type: Type.NUMBER },
-                    energy: { type: Type.NUMBER },
-                  },
-                  required: ["day", "motivation", "stress", "energy"],
-                },
-              },
-              frequentThemes: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "Temas o inquietudes recurrentes identificadas.",
-              },
-            },
-            required: ["mentalClarity", "stressLevel", "correlations", "weeklyHistory", "frequentThemes"],
-          },
-        },
-      });
-
-      const resultText = response.text || "{}";
-      return res.json(cleanAndParseJSON(resultText, fallbackAnalysis));
+    // 2. Groq Cloud AI como OPCIÓN SECUNDARIA (Respaldo)
+    if (groqKey) {
+      try {
+        const content = await callGroqChat(
+          [
+            { role: "system", content: "Eres un neurocientífico analítico de datos de conducta y bienestar. Responde estrictamente en formato JSON." },
+            { role: "user", content: prompt },
+          ],
+          {
+            apiKey: groqKey,
+            model: getGroqModel(req),
+            jsonMode: true,
+            temperature: 0.2,
+            max_tokens: 3000,
+          }
+        );
+        return res.json(cleanAndParseJSON(content, fallbackAnalysis));
+      } catch (groqErr: any) {
+        console.warn("[Analyze-Patterns] Fallo también en Groq Secundario:", groqErr.message);
+      }
     }
 
     return res.json(fallbackAnalysis);
@@ -1010,32 +1080,43 @@ RESPONDE ESTRICTAMENTE EN FORMATO JSON VÁLIDO CON ESTE ESQUEMA:
       novelInsights: []
     };
 
+    const geminiKey = getGeminiKey(req);
     const groqKey = getGroqKey(req);
-    if (groqKey) {
-      const content = await callGroqChat(
-        [
-          { role: "system", content: "Eres un analista neuroconductual de métricas dimensionales. Responde solo JSON." },
-          { role: "user", content: prompt }
-        ],
-        {
-          apiKey: groqKey,
-          model: getGroqModel(req),
-          jsonMode: true,
-          temperature: 0.1,
-          max_tokens: 1200
-        }
-      );
-      return res.json(cleanAndParseJSON(content, fallback));
+
+    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL
+    if (geminiKey) {
+      try {
+        const text = await callGemini({
+          apiKey: geminiKey,
+          contents: prompt,
+          responseMimeType: "application/json",
+        });
+        return res.json(cleanAndParseJSON(text, fallback));
+      } catch (geminiErr: any) {
+        console.warn("[Extract-Dimensions] Fallo en Gemini Primario, recurriendo a Groq:", geminiErr.message);
+      }
     }
 
-    if (process.env.GEMINI_API_KEY) {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
-      });
-      return res.json(cleanAndParseJSON(response.text || "{}", fallback));
+    // 2. Groq Cloud AI como OPCIÓN SECUNDARIA (Respaldo)
+    if (groqKey) {
+      try {
+        const content = await callGroqChat(
+          [
+            { role: "system", content: "Eres un analista neuroconductual de métricas dimensionales. Responde solo JSON." },
+            { role: "user", content: prompt }
+          ],
+          {
+            apiKey: groqKey,
+            model: getGroqModel(req),
+            jsonMode: true,
+            temperature: 0.1,
+            max_tokens: 1200
+          }
+        );
+        return res.json(cleanAndParseJSON(content, fallback));
+      } catch (groqErr: any) {
+        console.warn("[Extract-Dimensions] Fallo también en Groq Secundario:", groqErr.message);
+      }
     }
 
     return res.json(fallback);
@@ -1220,34 +1301,45 @@ GENERA UN INFORME EVOLUTIVO ESTRUCTURADO EN JSON CON EL SIGUIENTE ESQUEMA EXACTO
       ]
     };
 
+    const geminiKey = getGeminiKey(req);
     const groqKey = getGroqKey(req);
-    if (groqKey) {
-      const content = await callGroqChat(
-        [
-          { role: "system", content: "Eres el motor de memoria evolutiva y metaanálisis neuroconductual. Responde estrictamente en formato JSON." },
-          { role: "user", content: prompt }
-        ],
-        {
-          apiKey: groqKey,
-          model: getGroqModel(req),
-          jsonMode: true,
-          temperature: 0.2,
-          max_tokens: 3000
-        }
-      );
-      const parsed = cleanAndParseJSON(content, fallbackReport);
-      return res.json({ id: `ctx-${Date.now()}`, generatedAt: new Date().toISOString(), ...parsed });
+
+    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL
+    if (geminiKey) {
+      try {
+        const text = await callGemini({
+          apiKey: geminiKey,
+          contents: prompt,
+          responseMimeType: "application/json",
+        });
+        const parsed = cleanAndParseJSON(text, fallbackReport);
+        return res.json({ id: `ctx-${Date.now()}`, generatedAt: new Date().toISOString(), ...parsed });
+      } catch (geminiErr: any) {
+        console.warn("[Analyze-Context] Fallo en Gemini Primario, recurriendo a Groq:", geminiErr.message);
+      }
     }
 
-    if (process.env.GEMINI_API_KEY) {
-      const ai = getAI();
-      const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-        config: { responseMimeType: "application/json" }
-      });
-      const parsed = cleanAndParseJSON(response.text || "{}", fallbackReport);
-      return res.json({ id: `ctx-${Date.now()}`, generatedAt: new Date().toISOString(), ...parsed });
+    // 2. Groq Cloud AI como OPCIÓN SECUNDARIA (Respaldo)
+    if (groqKey) {
+      try {
+        const content = await callGroqChat(
+          [
+            { role: "system", content: "Eres el motor de memoria evolutiva y metaanálisis neuroconductual. Responde estrictamente en formato JSON." },
+            { role: "user", content: prompt }
+          ],
+          {
+            apiKey: groqKey,
+            model: getGroqModel(req),
+            jsonMode: true,
+            temperature: 0.2,
+            max_tokens: 3000
+          }
+        );
+        const parsed = cleanAndParseJSON(content, fallbackReport);
+        return res.json({ id: `ctx-${Date.now()}`, generatedAt: new Date().toISOString(), ...parsed });
+      } catch (groqErr: any) {
+        console.warn("[Analyze-Context] Fallo también en Groq Secundario:", groqErr.message);
+      }
     }
 
     return res.json(fallbackReport);

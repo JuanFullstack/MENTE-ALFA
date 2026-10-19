@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from "react";
 import { 
   User, 
@@ -18,7 +13,8 @@ import {
   ExternalLink,
   Loader2,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Sparkles
 } from "lucide-react";
 import { UserProfile, ZenDB } from "../lib/storage";
 import { 
@@ -27,6 +23,9 @@ import {
   getStoredGroqModel, 
   setStoredGroqModel, 
   testGroqKey, 
+  getStoredGeminiApiKey,
+  setStoredGeminiApiKey,
+  testGeminiKey,
   GROQ_MODELS 
 } from "../services/groqEvaluation";
 
@@ -41,14 +40,21 @@ export default function ConfiguracionView({ profile, onUpdateProfile }: Configur
   const [notes, setNotes] = useState(profile.notes);
   const [showSavedToast, setShowSavedToast] = useState(false);
 
-  // Groq AI State
+  // Google AI Studio (Gemini) State - OPCIÓN PRINCIPAL
+  const [geminiKey, setGeminiKey] = useState("");
+  const [showGeminiKey, setShowGeminiKey] = useState(false);
+  const [isTestingGemini, setIsTestingGemini] = useState(false);
+  const [testGeminiResult, setTestGeminiResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Groq AI State - OPCIÓN SECUNDARIA
   const [groqKey, setGroqKey] = useState("");
-  const [groqModel, setGroqModel] = useState("openai/gpt-oss-120b");
+  const [groqModel, setGroqModel] = useState("llama-3.3-70b-versatile");
   const [showKey, setShowKey] = useState(false);
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
+    setGeminiKey(getStoredGeminiApiKey());
     setGroqKey(getStoredGroqApiKey());
     setGroqModel(getStoredGroqModel());
   }, []);
@@ -64,7 +70,8 @@ export default function ConfiguracionView({ profile, onUpdateProfile }: Configur
       notes: notes.trim(),
     });
 
-    // Save Groq configuration
+    // Save AI engine configurations
+    setStoredGeminiApiKey(geminiKey);
     setStoredGroqApiKey(groqKey);
     setStoredGroqModel(groqModel);
 
@@ -72,6 +79,20 @@ export default function ConfiguracionView({ profile, onUpdateProfile }: Configur
     setTimeout(() => {
       setShowSavedToast(false);
     }, 3000);
+  };
+
+  const handleTestGemini = async () => {
+    if (!geminiKey.trim()) {
+      setTestGeminiResult({ success: false, message: "Por favor ingresa una clave API de Google AI Studio antes de probar." });
+      return;
+    }
+
+    setIsTestingGemini(true);
+    setTestGeminiResult(null);
+
+    const result = await testGeminiKey(geminiKey);
+    setTestGeminiResult(result);
+    setIsTestingGemini(false);
   };
 
   const handleTestGroq = async () => {
@@ -91,6 +112,7 @@ export default function ConfiguracionView({ profile, onUpdateProfile }: Configur
   const handleResetDatabase = () => {
     if (window.confirm("¿Estás seguro de que deseas restablecer los datos? Se borrarán todas tus conversaciones, recuerdos y registros de bienestar guardados en el navegador.")) {
       ZenDB.clearAll();
+      localStorage.removeItem("gemini_api_key");
       localStorage.removeItem("groq_api_key");
       localStorage.removeItem("groq_model");
       window.location.reload();
@@ -126,16 +148,121 @@ export default function ConfiguracionView({ profile, onUpdateProfile }: Configur
             </div>
           )}
 
-          {/* Groq AI Engine Section */}
-          <div className="bg-white border border-[#EAE2D6] rounded-3xl p-6 md:p-8 shadow-sm space-y-6">
-            <div className="flex items-center justify-between border-b border-[#EAE2D6] pb-4">
+          {/* Google AI Studio (Gemini) - OPCIÓN PRINCIPAL */}
+          <div className="bg-white border-2 border-[#8BA888]/40 rounded-3xl p-6 md:p-8 shadow-sm space-y-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 bg-[#8BA888] text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl tracking-wider uppercase flex items-center gap-1 shadow-sm">
+              <Sparkles className="h-3 w-3" />
+              Opción Principal
+            </div>
+
+            <div className="flex items-center justify-between border-b border-[#EAE2D6] pb-4 pr-24">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-[#8BA888]/15 text-[#6D856B] flex items-center justify-center font-bold">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[#2D332D]">Google AI Studio (Gemini API)</h3>
+                  <p className="text-[11px] text-[#7A7167]">Motor principal de razonamiento rápido y memoria evolutiva.</p>
+                </div>
+              </div>
+
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold text-[#6D856B] hover:underline"
+              >
+                <span>Obtener API Key</span>
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+
+            {/* Google AI Studio API Key Input */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-[#7A7167] uppercase tracking-wider flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Key className="h-3.5 w-3.5 text-[#8BA888]" />
+                  Google AI Studio API Key
+                </span>
+                <a
+                  href="https://aistudio.google.com/app/apikey"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="sm:hidden inline-flex items-center gap-1 text-[10px] font-semibold text-[#6D856B] hover:underline"
+                >
+                  <span>Obtener clave</span>
+                  <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              </label>
+              <div className="relative flex items-center">
+                <input
+                  type={showGeminiKey ? "text" : "password"}
+                  value={geminiKey}
+                  onChange={(e) => {
+                    setGeminiKey(e.target.value);
+                    setTestGeminiResult(null);
+                  }}
+                  placeholder="AQ.Ab8RN6K... o AIzaSy..."
+                  className="block w-full pl-4 pr-24 py-2.5 border border-[#EAE2D6] rounded-xl text-[#4A443F] text-xs focus:ring-2 focus:ring-[#8BA888]/20 focus:border-[#8BA888] transition outline-none font-mono"
+                />
+                <div className="absolute right-2 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowGeminiKey(!showGeminiKey)}
+                    className="p-1.5 text-[#7A7167] hover:text-[#2D332D] rounded-lg transition"
+                    title={showGeminiKey ? "Ocultar clave" : "Mostrar clave"}
+                  >
+                    {showGeminiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTestGemini}
+                    disabled={isTestingGemini}
+                    className="text-[10px] font-bold px-2.5 py-1 bg-[#8BA888]/15 hover:bg-[#8BA888]/25 text-[#6D856B] rounded-lg transition flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {isTestingGemini ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    Probar
+                  </button>
+                </div>
+              </div>
+
+              {testGeminiResult && (
+                <div
+                  className={`mt-2 p-2.5 rounded-xl text-[11px] flex items-center gap-2 ${
+                    testGeminiResult.success
+                      ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                      : "bg-rose-50 text-rose-800 border border-rose-200"
+                  }`}
+                >
+                  {testGeminiResult.success ? (
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                  )}
+                  <span>{testGeminiResult.message}</span>
+                </div>
+              )}
+
+              <p className="text-[10px] text-[#7A7167]">
+                Se prioriza en todas las consultas de Chat, Resúmenes y Análisis. Si la cuota se agota temporalmente, se usa Groq automáticamente.
+              </p>
+            </div>
+          </div>
+
+          {/* Groq AI Engine Section - OPCIÓN SECUNDARIA */}
+          <div className="bg-white border border-[#EAE2D6] rounded-3xl p-6 md:p-8 shadow-sm space-y-6 relative overflow-hidden">
+            <div className="absolute top-0 right-0 bg-[#A69D91]/20 text-[#7A7167] text-[10px] font-bold px-3 py-1 rounded-bl-xl tracking-wider uppercase">
+              Respaldo Secundario
+            </div>
+
+            <div className="flex items-center justify-between border-b border-[#EAE2D6] pb-4 pr-32">
               <div className="flex items-center gap-2.5">
                 <div className="h-9 w-9 rounded-xl bg-[#F55036]/10 text-[#F55036] flex items-center justify-center font-bold">
                   <Zap className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-[#2D332D]">Motor de Inferencia Groq AI</h3>
-                  <p className="text-[11px] text-[#7A7167]">Inferencia ultra-rápida (LPU™) compatible con OpenAI.</p>
+                  <h3 className="text-sm font-bold text-[#2D332D]">Motor Groq AI (Llama 3.3 / Qwen)</h3>
+                  <p className="text-[11px] text-[#7A7167]">Opción de respaldo automático ultra-rápida (LPU™).</p>
                 </div>
               </div>
 
@@ -143,7 +270,7 @@ export default function ConfiguracionView({ profile, onUpdateProfile }: Configur
                 href="https://console.groq.com/keys"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#F55036] hover:underline"
+                className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold text-[#F55036] hover:underline"
               >
                 <span>Obtener API Key</span>
                 <ExternalLink className="h-3 w-3" />
