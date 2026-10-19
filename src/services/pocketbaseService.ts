@@ -10,9 +10,16 @@ import {
   DailyLog, 
   Pattern, 
   Strategy,
-  AnalysisMetadata 
+  AnalysisMetadata,
+  FichaVivenciaInmutable 
 } from "../types";
-import { UserProfile } from "../lib/storage";
+import { 
+  UserProfile, 
+  transformarConversacionAFicha, 
+  transformarEstrategiaAFicha, 
+  transformarMemoriaViejaAFicha, 
+  consolidarNodosPatronesPorPunteros 
+} from "../lib/storage";
 import { asegurarFichaInmutable } from "../lib/baseContext";
 
 export const POCKETBASE_URL = "http://167.234.243.247:8090";
@@ -239,9 +246,13 @@ export async function deleteMensajesByConvPB(conversationId: string): Promise<bo
  * intactos el detonante, contexto situacional, sesgo, acción y resultado.
  * ============================================================================
  */
-export async function fetchMemoriasPB(): Promise<Memory[]> {
+export async function fetchMemoriasPB(ramaId?: string): Promise<Memory[]> {
   try {
-    const res = await fetch(`${POCKETBASE_URL}/api/collections/mentealfa_memorias/records?sort=-created&perPage=200`, {
+    let url = `${POCKETBASE_URL}/api/collections/mentealfa_memorias/records?sort=-created&perPage=200`;
+    if (ramaId && ramaId !== "todos") {
+      url += `&filter=(category='${encodeURIComponent(ramaId)}')`;
+    }
+    const res = await fetch(url, {
       method: "GET",
       headers: { "Content-Type": "application/json" },
     });
@@ -804,3 +815,86 @@ export async function backupDatabasePB(fullData: any): Promise<boolean> {
     return false;
   }
 }
+
+export async function migrarBaseDeDatosExistenteAArbolPB(
+  localConversations: Conversation[],
+  localMemories: Memory[],
+  localStrategies: Strategy[]
+): Promise<{
+  memoriesTransformadas: Memory[];
+  patternsConsolidados: Pattern[];
+  totalFichas: number;
+}> {
+  // 1. Recuperar todo lo que ya existe en PocketBase
+  const [remConvs, remMems, remStrats] = await Promise.all([
+    fetchConversacionesPB().catch(() => []),
+    fetchMemoriasPB().catch(() => []),
+    fetchEstrategiasPB().catch(() => []),
+  ]);
+
+  // 2. Unificar registros remotos y locales sin duplicar
+  const todasConvs = [...remConvs];
+  for (const lc of localConversations) {
+    if (!todasConvs.some((c) => c.id === lc.id)) todasConvs.push(lc);
+  }
+
+  const todasMems = [...remMems];
+  for (const lm of localMemories) {
+    if (!todasMems.some((m) => m.id === lm.id || m.text === lm.text)) todasMems.push(lm);
+  }
+
+  const todasStrats = [...remStrats];
+  for (const ls of localStrategies) {
+    if (!todasStrats.some((s) => s.id === ls.id || s.name === ls.name)) todasStrats.push(ls);
+  }
+
+  // 3. Transformar cada fuente a FichaVivenciaInmutable
+  const mapaFichas = new Map<string, FichaVivenciaInmutable>();
+
+  todasMems.forEach((m, i) => {
+    const f = transformarMemoriaViejaAFicha(m, i);
+    mapaFichas.set(f.id, f);
+  });
+
+  todasConvs.forEach((c, i) => {
+    const f = transformarConversacionAFicha(c, i);
+    if (f) mapaFichas.set(f.id, f);
+  });
+
+  todasStrats.forEach((s, i) => {
+    const f = transformarEstrategiaAFicha(s, i);
+    mapaFichas.set(f.id, f);
+  });
+
+  // 4. Convertir todas las fichas al formato Memory enriquecido para el Arbol
+  const memoriesTransformadas: Memory[] = Array.from(mapaFichas.values()).map((ficha) => ({
+    id: ficha.id,
+    text: `[${ficha.id} · ${ficha.rama_id.toUpperCase()} · ${ficha.tags_mecanismo.join(" ")}] Detonante: ${ficha.detonante_exacto} | Contexto: ${ficha.contexto_situacional.momento} (Energia: ${ficha.contexto_situacional.nivel_energia}) | Sesgo: ${ficha.reaccion_inicial} | Quiebre: ${ficha.solucion_aplicada} -> Resultado: ${ficha.resultado.toUpperCase()}`,
+    category: ficha.rama_id,
+    createdAt: new Date(ficha.fecha).toISOString(),
+    isApproved: true,
+    summary: JSON.stringify(ficha),
+    fichaInmutable: ficha,
+    rama_id: ficha.rama_id,
+    tags_mecanismo: ficha.tags_mecanismo,
+    isImmutable: true,
+  }));
+
+  // 5. Subir a PocketBase las fichas transformadas que aun no estaban en mentealfa_memorias
+  const idsExistentesEnPB = new Set(remMems.map((m) => m.id));
+  for (const mem of memoriesTransformadas) {
+    if (!idsExistentesEnPB.has(mem.id)) {
+      await createMemoriaPB(mem).catch(() => {});
+    }
+  }
+
+  // 6. Consolidar Nodos de Patrones por punteros (Fase 1 Capa 2)
+  const patternsConsolidados = consolidarNodosPatronesPorPunteros(memoriesTransformadas);
+
+  return {
+    memoriesTransformadas,
+    patternsConsolidados,
+    totalFichas: memoriesTransformadas.length,
+  };
+}
+

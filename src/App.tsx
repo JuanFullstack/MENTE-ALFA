@@ -40,7 +40,8 @@ import {
   createRegistroPB,
   createEstrategiaPB,
   createPatronPB,
-  savePerfilPB
+  savePerfilPB,
+  migrarBaseDeDatosExistenteAArbolPB
 } from "./services/pocketbaseService";
 
 export default function App() {
@@ -201,6 +202,22 @@ export default function App() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    const yaMigrado = localStorage.getItem("mentealfa_migracion_arbol_v2_completada");
+    if (!yaMigrado && (conversations.length > 0 || memories.length > 0)) {
+      migrarBaseDeDatosExistenteAArbolPB(conversations, memories, strategies).then(
+        ({ memoriesTransformadas, patternsConsolidados, totalFichas }) => {
+          if (totalFichas > 0) {
+            handleUpdateMemories(memoriesTransformadas);
+            handleUpdatePatterns(patternsConsolidados);
+            localStorage.setItem("mentealfa_migracion_arbol_v2_completada", "true");
+            console.log(`Migracion automatica completada: ${totalFichas} experiencias historicas adaptadas al Arbol.`);
+          }
+        }
+      );
+    }
+  }, [conversations.length, memories.length]);
 
   // Sync state modifications back to localStorage via ZenDB
   const handleUpdateConversations = (newConvs: Conversation[]) => {

@@ -52,7 +52,7 @@ import {
   DimensionalAxis,
   ContextEvolutionReport
 } from "../types";
-import { UserProfile, ZenDB } from "../lib/storage";
+import { UserProfile, ZenDB, construirArbolDesdeDatos } from "../lib/storage";
 import {
   detectarRamaYTags,
   podarFichasParaInferencia,
@@ -61,8 +61,15 @@ import {
   buildRepairedSystemPrompt,
   ASSISTANT_PREFILL_TAG,
   parseRepairedTacticalOutput,
+  consultarArbolPorRamaYNodo,
 } from "../lib/baseContext";
-import { getStoredGroqApiKey, getStoredGroqModel, chatWithGroq, extractDimensionalAxesGroq } from "../services/groqEvaluation";
+import { 
+  getStoredGroqApiKey, 
+  getStoredGroqModel, 
+  chatWithGroq, 
+  extractDimensionalAxesGroq,
+  extractFichaVivenciaGroq
+} from "../services/groqEvaluation";
 import { 
   upsertConversacionSummaryPB, 
   deleteConversacionPB,
@@ -141,6 +148,59 @@ export default function ChatView({
   // Edit conversation title state
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+
+  const [guardandoEnArbolId, setGuardandoEnArbolId] = useState<string | null>(null);
+
+  const limpiarFormatoPlano = (txt: string): string => {
+    return txt
+      .replace(/<analisis_contextual>[\s\S]*?<\/analisis_contextual>/gi, "")
+      .replace(/<\/?consejo_tactico>/gi, "")
+      .replace(/\*\*/g, "")
+      .replace(/\*/g, "")
+      .replace(/^[0-9]+\.\s*/gm, "")
+      .replace(/^[-•]\s*/gm, "")
+      .trim();
+  };
+
+  const handleConsolidarIntercambioEnArbol = async (assistantMsg: Message) => {
+    setGuardandoEnArbolId(assistantMsg.id);
+    try {
+      const idx = currentMessages.findIndex((m) => m.id === assistantMsg.id);
+      const userMsgPrevio = idx > 0 ? currentMessages[idx - 1] : null;
+      const relatoCompleto = userMsgPrevio
+        ? `Situacion/Consulta: ${userMsgPrevio.text}\nRespuesta/Accion tactica: ${assistantMsg.text}`
+        : assistantMsg.text;
+
+      const ficha = await extractFichaVivenciaGroq(relatoCompleto);
+      const nuevaMemoria: Memory = {
+        id: ficha.id,
+        text: `[${ficha.id} · ${ficha.rama_id.toUpperCase()}] Detonante: ${ficha.detonante_exacto} | Sesgo: ${ficha.reaccion_inicial} | Quiebre: ${ficha.solucion_aplicada}`,
+        category: ficha.rama_id,
+        createdAt: new Date().toISOString(),
+        isApproved: true,
+        summary: JSON.stringify(ficha),
+        fichaInmutable: ficha,
+        rama_id: ficha.rama_id,
+        tags_mecanismo: ficha.tags_mecanismo,
+        isImmutable: true,
+      };
+
+      const nuevasMemorias = [nuevaMemoria, ...memories];
+      onUpdateMemories(nuevasMemorias);
+      await createMemoriaPB(nuevaMemoria);
+
+      if (userMsgPrevio) await createMensajePB(userMsgPrevio);
+      await createMensajePB(assistantMsg);
+
+      setErrorMsg(null);
+      alert(`Vivencia consolidada en el Arbol (Rama: ${ficha.rama_id.toUpperCase()} | Nodo: ${ficha.tags_mecanismo.join(", ")})`);
+    } catch (e) {
+      console.error("Error al consolidar vivencia:", e);
+      setErrorMsg("No se pudo consolidar la vivencia en el Árbol.");
+    } finally {
+      setGuardandoEnArbolId(null);
+    }
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -573,7 +633,6 @@ ${textToSummarize}`;
 
     const updatedMessages = [...messages, userMsg];
     onUpdateMessages(updatedMessages);
-    createMensajePB(userMsg).catch(console.warn);
 
     if (activeConv && (activeConv.title === "Nueva reflexión" || activeConv.title.startsWith("Conversación"))) {
       const summaryTitle = userText.slice(0, 36) + (userText.length > 36 ? "..." : "");
@@ -614,6 +673,7 @@ ${textToSummarize}`;
             decisions: decisions,
             dailyReports: dailyReports,
             previousSummaries: previousSummaries,
+            conversations: conversations.filter((c) => c.isSummarized && c.summary),
             baseContext: {
               userName: profile.userName,
               companionName: profile.companionName,
@@ -633,17 +693,26 @@ ${textToSummarize}`;
       }
 
       if (!data || !data.message) {
-        // Fallback directo a Groq Cloud con Arquitectura Reparada (Fases 2, 3 y 4)
+        // Fallback directo a Groq Cloud con Arbol Jerarquico de Memoria
         const activeThreadMsgs = updatedMessages.filter((m) => m.conversationId === activeConversationId);
         const { rama: ramaActiva, tags: tagsDetectados } = detectarRamaYTags(userText, activeThreadMsgs);
 
-        const fichasPodadas = podarFichasParaInferencia(
+        const arbolLocal = construirArbolDesdeDatos(
           memories.filter((m) => m.isApproved),
-          strategies,
-          ramaActiva,
-          tagsDetectados,
-          5
+          conversations,
+          strategies
         );
+        let fichasPodadas = consultarArbolPorRamaYNodo(arbolLocal, ramaActiva, tagsDetectados, 5);
+        if (!fichasPodadas || fichasPodadas.length === 0) {
+          fichasPodadas = podarFichasParaInferencia(
+            memories.filter((m) => m.isApproved),
+            strategies,
+            ramaActiva,
+            tagsDetectados,
+            5
+          );
+        }
+
         const fichasCompactasTexto = formatearFichasInmutablesCompactas(fichasPodadas, ramaActiva);
         const hiloRecienteTexto = construirHiloActivoTexto(activeThreadMsgs, decisions, currentState, ramaActiva);
 
@@ -698,7 +767,6 @@ ${textToSummarize}`;
       };
 
       onUpdateMessages([...updatedMessages, aiMsg]);
-      createMensajePB(aiMsg).catch(console.warn);
     } catch (err: any) {
       console.error("Chat error:", err);
       setErrorMsg("Error al comunicar con Groq AI. Verifica tu conexión o clave en Configuración.");
@@ -1480,8 +1548,19 @@ ${textToSummarize}`;
                   </div>
 
                   <div className="space-y-2 flex-1 min-w-0">
-                    <div className="bg-white border border-[#EAE2D6] rounded-2xl p-3 sm:p-4 text-xs sm:text-sm text-[#3A3530] leading-relaxed shadow-2xs">
-                      <p className="whitespace-pre-wrap">{msg.text}</p>
+                    <div className="bg-white border border-[#EAE2D6] rounded-2xl p-3 sm:p-4 text-xs sm:text-sm text-[#3A3530] leading-relaxed shadow-2xs space-y-2">
+                      <p className="whitespace-pre-wrap">{limpiarFormatoPlano(msg.text)}</p>
+                      <div className="pt-2 border-t border-[#EAE2D6]/60 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-[#A69D91] italic">Modo consulta (no guardado en BD)</span>
+                        <button
+                          type="button"
+                          onClick={() => handleConsolidarIntercambioEnArbol(msg)}
+                          disabled={guardandoEnArbolId === msg.id}
+                          className="px-2.5 py-1 rounded-lg bg-[#8BA888]/15 hover:bg-[#8BA888] text-[#6D856B] hover:text-white font-bold transition cursor-pointer"
+                        >
+                          {guardandoEnArbolId === msg.id ? "Guardando en Arbol..." : "+ Guardar como Vivencia en BD"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

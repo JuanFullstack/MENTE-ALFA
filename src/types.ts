@@ -49,6 +49,32 @@ export interface NodoPatron {
   tasa_exito?: number; // Porcentaje 0-100 calculado estadísticamente
 }
 
+export interface NodoMecanismoArbol {
+  tag: string; // ej: "#busqueda_aprobacion"
+  rama_id: RamaTematica;
+  frecuencia: number;
+  tasa_exito: number;
+  que_funciono: string[]; // Soluciones reales que tuvieron éxito en este nodo
+  que_fallo: string[];    // Reacciones o intentos que fallaron para no repetirlos
+  fichas_ids: string[];   // Punteros directos a las fichas de este nodo
+}
+
+export interface RamaArbolMemoria {
+  rama_id: RamaTematica;
+  nombre: string;
+  reglas_base: string;
+  nodos: Record<string, NodoMecanismoArbol>; // Acceso directo O(1) por tag de mecanismo
+  fichas_recientes_ids: string[];            // Últimas fichas de esta rama
+}
+
+export interface ArbolMemoriaJerarquico {
+  version: number;
+  updatedAt: string;
+  ramas: Record<RamaTematica, RamaArbolMemoria>;
+  fichasPorId: Record<string, FichaVivenciaInmutable>; // Diccionario O(1) por ID (VIV-...)
+  indiceTransversalTags: Record<string, string[]>;     // Tag -> Array de IDs en cualquier rama (para analogías)
+}
+
 // Estado del Hilo Activo (Continuidad reciente por rama)
 export interface HiloActivo {
   id: string; // ej: "HILO-45"

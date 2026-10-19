@@ -17,7 +17,8 @@ import {
   createMemoriaPB, 
   updateMemoriaPB, 
   deleteMemoriaPB,
-  upsertConversacionSummaryPB 
+  upsertConversacionSummaryPB,
+  migrarBaseDeDatosExistenteAArbolPB
 } from "../services/pocketbaseService";
 
 interface MemoriaViewProps {
@@ -65,24 +66,17 @@ export default function MemoriaView({
   const handleSyncWithPocketBase = async () => {
     setIsSyncingDB(true);
     try {
-      const remoteMems = await fetchMemoriasPB();
-      if (remoteMems && remoteMems.length > 0) {
-        const merged = [...memories];
-        remoteMems.forEach((r) => {
-          const exists = merged.some((m) => m.id === r.id || (m.text === r.text && m.category === r.category));
-          if (!exists) {
-            merged.push(r);
-          }
-        });
-        onUpdateMemories(merged);
-        ZenDB.setMemories(merged);
-        setSyncToast(`Sincronización exitosa: ${remoteMems.length} notas en base de datos.`);
+      const { memoriesTransformadas, totalFichas } = await migrarBaseDeDatosExistenteAArbolPB(
+        conversations,
+        memories,
+        []
+      );
+      if (memoriesTransformadas && memoriesTransformadas.length > 0) {
+        onUpdateMemories(memoriesTransformadas);
+        ZenDB.setMemories(memoriesTransformadas);
+        setSyncToast(`Sincronización exitosa: ${totalFichas} vivencias adaptadas al Árbol en PocketBase.`);
       } else {
-        // Upload local memories to PocketBase
-        for (const m of memories) {
-          await createMemoriaPB(m);
-        }
-        setSyncToast(`Sincronizadas ${memories.length} notas con PocketBase DB.`);
+        setSyncToast("Base de datos sincronizada.");
       }
     } catch (err) {
       console.error(err);

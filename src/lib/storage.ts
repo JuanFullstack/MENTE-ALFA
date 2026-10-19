@@ -16,9 +16,12 @@ import {
   SistemaMentalData,
   FichaVivenciaInmutable,
   NodoPatron,
-  RamaTematica
+  RamaTematica,
+  NodoMecanismoArbol,
+  RamaArbolMemoria,
+  ArbolMemoriaJerarquico
 } from "../types";
-import { RAW_BASE_CONTEXT, asegurarFichaInmutable } from "./baseContext";
+import { RAW_BASE_CONTEXT, asegurarFichaInmutable, GUIAS_BASE_POR_RAMA, detectarRamaYTags } from "./baseContext";
 
 // Keys for local storage
 const KEYS = {
@@ -34,6 +37,7 @@ const KEYS = {
   DECISIONS: "zen_ai_decisions",
   SISTEMA_MENTAL: "zen_ai_sistema_mental",
   ACTIVE_CONVERSATION_ID: "zen_ai_active_conv_id",
+  ARBOL_MEMORIA: "zen_ai_arbol_memoria_v2",
 };
 
 export interface UserProfile {
@@ -593,6 +597,165 @@ export function consolidarNodosPatronesPorPunteros(memories: Memory[]): Pattern[
   return patronesConsolidados;
 }
 
+export function construirArbolDesdeDatos(
+  memories: Memory[],
+  conversations: Conversation[] = [],
+  strategies: Strategy[] = []
+): ArbolMemoriaJerarquico {
+  const arbol: ArbolMemoriaJerarquico = {
+    version: 2,
+    updatedAt: new Date().toISOString(),
+    ramas: {
+      proyectos: {
+        rama_id: "proyectos",
+        nombre: "Proyectos, Codigo y Tesis",
+        reglas_base: GUIAS_BASE_POR_RAMA.proyectos,
+        nodos: {},
+        fichas_recientes_ids: [],
+      },
+      vinculos: {
+        rama_id: "vinculos",
+        nombre: "Vinculos, Interaccion Social y Exposicion",
+        reglas_base: GUIAS_BASE_POR_RAMA.vinculos,
+        nodos: {},
+        fichas_recientes_ids: [],
+      },
+      habitos: {
+        rama_id: "habitos",
+        nombre: "Habitos, Bioenergia y Regulacion",
+        reglas_base: GUIAS_BASE_POR_RAMA.habitos,
+        nodos: {},
+        fichas_recientes_ids: [],
+      },
+    },
+    fichasPorId: {},
+    indiceTransversalTags: {},
+  };
+
+  const insertarFichaEnArbol = (ficha: FichaVivenciaInmutable) => {
+    arbol.fichasPorId[ficha.id] = ficha;
+    const ramaObj = arbol.ramas[ficha.rama_id] || arbol.ramas.proyectos;
+
+    if (!ramaObj.fichas_recientes_ids.includes(ficha.id)) {
+      ramaObj.fichas_recientes_ids.unshift(ficha.id);
+    }
+
+    const tags = ficha.tags_mecanismo && ficha.tags_mecanismo.length > 0
+      ? ficha.tags_mecanismo
+      : [`#general_${ficha.rama_id}`];
+
+    for (const tag of tags) {
+      if (!ramaObj.nodos[tag]) {
+        ramaObj.nodos[tag] = {
+          tag,
+          rama_id: ficha.rama_id,
+          frecuencia: 0,
+          tasa_exito: 0,
+          que_funciono: [],
+          que_fallo: [],
+          fichas_ids: [],
+        };
+      }
+      const nodo = ramaObj.nodos[tag];
+      if (!nodo.fichas_ids.includes(ficha.id)) {
+        nodo.fichas_ids.push(ficha.id);
+        nodo.frecuencia = nodo.fichas_ids.length;
+        if (ficha.resultado === "exito" && ficha.solucion_aplicada) {
+          if (!nodo.que_funciono.includes(ficha.solucion_aplicada)) {
+            nodo.que_funciono.push(ficha.solucion_aplicada);
+          }
+        } else if (ficha.resultado === "fallo") {
+          const falloDesc = `${ficha.reaccion_inicial} -> ${ficha.solucion_aplicada}`;
+          if (!nodo.que_fallo.includes(falloDesc)) {
+            nodo.que_fallo.push(falloDesc);
+          }
+        }
+        const exitosCount = nodo.fichas_ids.filter(
+          (id) => arbol.fichasPorId[id]?.resultado === "exito"
+        ).length;
+        nodo.tasa_exito = Math.round((exitosCount / Math.max(1, nodo.frecuencia)) * 100);
+      }
+
+      if (!arbol.indiceTransversalTags[tag]) {
+        arbol.indiceTransversalTags[tag] = [];
+      }
+      if (!arbol.indiceTransversalTags[tag].includes(ficha.id)) {
+        arbol.indiceTransversalTags[tag].push(ficha.id);
+      }
+    }
+  };
+
+  // 1. Insertar memorias/fichas guardadas
+  (memories || []).forEach((m, idx) => {
+    insertarFichaEnArbol(asegurarFichaInmutable(m, idx + 1));
+  });
+
+  // 2. Insertar resumenes de sesiones pasadas (mentealfa_conversaciones) como vivencias reales
+  (conversations || [])
+    .filter((c) => c.isSummarized && c.summary)
+    .forEach((c, idx) => {
+      const textoResumen = c.summary || "";
+      const { rama, tags } = detectarRamaYTags(`${c.title} ${textoResumen}`);
+      const fechaIso = (c.updatedAt || c.createdAt || new Date().toISOString()).split("T")[0];
+
+      // Extraer secciones clave del resumen de 14 puntos si existen
+      const extraerSeccion = (titulo: string): string => {
+        const regex = new RegExp(`##\\s*${titulo}[\\s\\S]*?(?=\\n##|$)`, "i");
+        const match = textoResumen.match(regex);
+        return match ? match[0].replace(/##\s*[^\n]+\n?/, "").trim().slice(0, 220) : "";
+      };
+
+      const contextoSec = extraerSeccion("CONTEXTO") || extraerSeccion("HISTORIA") || c.title;
+      const patronesSec = extraerSeccion("PATRONES") || extraerSeccion("CAMBIOS DE ESTADO") || "Patron registrado en sesion";
+      const principiosSec =
+        extraerSeccion("DECISIONES / PROTOCOLOS") ||
+        extraerSeccion("PRINCIPIOS / REGLAS DESCUBIERTAS") ||
+        extraerSeccion("CONCLUSIÓN DE ESTADO") ||
+        textoResumen.slice(-220);
+
+      insertarFichaEnArbol({
+        id: `VIV-SES-${fechaIso}-${String(idx + 1).padStart(2, "0")}`,
+        fecha: fechaIso,
+        rama_id: c.rama_id || rama,
+        tags_mecanismo: tags,
+        contexto_situacional: {
+          momento: c.title,
+          nivel_energia: "medio",
+          factores_externos: contextoSec.replace(/\s+/g, " ").slice(0, 120),
+        },
+        detonante_exacto: c.title,
+        reaccion_inicial: patronesSec.replace(/\s+/g, " ").slice(0, 140),
+        solucion_aplicada: principiosSec.replace(/\s+/g, " ").slice(0, 180),
+        resultado: "exito",
+        inmutable: true,
+      });
+    });
+
+  // 3. Insertar estrategias consolidadas y descartadas (Capa E)
+  (strategies || []).forEach((s, idx) => {
+    const { rama, tags } = detectarRamaYTags(`${s.name} ${s.situation} ${s.result}`);
+    const fechaIso = (s.createdAt || new Date().toISOString()).split("T")[0];
+    insertarFichaEnArbol({
+      id: `VIV-EST-${String(idx + 1).padStart(2, "0")}`,
+      fecha: fechaIso,
+      rama_id: s.rama_id || rama,
+      tags_mecanismo: s.tags_mecanismo && s.tags_mecanismo.length > 0 ? s.tags_mecanismo : tags,
+      contexto_situacional: {
+        momento: s.situation,
+        nivel_energia: s.resultType === "positivo" ? "alto" : "bajo",
+        factores_externos: s.reason || "Estrategia evaluada",
+      },
+      detonante_exacto: s.situation,
+      reaccion_inicial: s.resultType === "negativo" ? `Intento fallido: ${s.name}` : "Friccion ante la situacion",
+      solucion_aplicada: `${s.name}: ${s.result}`,
+      resultado: s.resultType === "positivo" ? "exito" : "fallo",
+      inmutable: true,
+    });
+  });
+
+  return arbol;
+}
+
 const INITIAL_PATTERNS: Pattern[] = consolidarNodosPatronesPorPunteros(INITIAL_MEMORIES);
 
 export function getLocalStorage<T>(key: string, initialValue: T): T {
@@ -729,6 +892,22 @@ export const ZenDB = {
     setLocalStorage(KEYS.ACTIVE_CONVERSATION_ID, id);
   },
 
+  getArbolMemoria(): ArbolMemoriaJerarquico | null {
+    return getLocalStorage<ArbolMemoriaJerarquico | null>(KEYS.ARBOL_MEMORIA, null);
+  },
+  setArbolMemoria(arbol: ArbolMemoriaJerarquico): void {
+    setLocalStorage(KEYS.ARBOL_MEMORIA, arbol);
+  },
+  sincronizarArbolMemoria(
+    memories: Memory[] = this.getMemories(),
+    conversations: Conversation[] = this.getConversations(),
+    strategies: Strategy[] = this.getStrategies()
+  ): ArbolMemoriaJerarquico {
+    const arbol = construirArbolDesdeDatos(memories, conversations, strategies);
+    this.setArbolMemoria(arbol);
+    return arbol;
+  },
+
   clearAll(): void {
     localStorage.removeItem(KEYS.USER_PROFILE);
     localStorage.removeItem(KEYS.CONVERSATIONS);
@@ -742,5 +921,109 @@ export const ZenDB = {
     localStorage.removeItem(KEYS.DAILY_REPORTS);
     localStorage.removeItem(KEYS.SISTEMA_MENTAL);
     localStorage.removeItem(KEYS.ACTIVE_CONVERSATION_ID);
+    localStorage.removeItem(KEYS.ARBOL_MEMORIA);
   }
 };
+
+export function transformarConversacionAFicha(
+  conv: Conversation,
+  index: number
+): FichaVivenciaInmutable | null {
+  if (!conv.summary || !conv.summary.trim()) return null;
+
+  const textoResumen = conv.summary;
+  const { rama, tags } = detectarRamaYTags(`${conv.title || ""} ${textoResumen}`);
+  const fechaIso = (conv.updatedAt || conv.createdAt || new Date().toISOString()).split("T")[0];
+
+  const extraerSeccion = (titulo: string): string => {
+    const regex = new RegExp(`##\\s*${titulo}[\\s\\S]*?(?=\\n##|$)`, "i");
+    const match = textoResumen.match(regex);
+    return match
+      ? match[0]
+          .replace(/##\s*[^\n]+\n?/, "")
+          .replace(/\s+/g, " ")
+          .trim()
+      : "";
+  };
+
+  const secContexto = extraerSeccion("CONTEXTO");
+  const secHistoria = extraerSeccion("HISTORIA");
+  const secPatrones = extraerSeccion("PATRONES") || extraerSeccion("CAMBIOS DE ESTADO");
+  const secInterpretacion = extraerSeccion("INTERPRETACIÓN") || extraerSeccion("INTERPRETACION");
+  const secDecisiones =
+    extraerSeccion("DECISIONES / PROTOCOLOS") ||
+    extraerSeccion("PRINCIPIOS / REGLAS DESCUBIERTAS") ||
+    extraerSeccion("CONCLUSIÓN DE ESTADO") ||
+    extraerSeccion("CONCLUSION DE ESTADO");
+
+  const nivelEnergiaDetectado: "alto" | "medio" | "bajo" =
+    textoResumen.toLowerCase().includes("fatiga") ||
+    textoResumen.toLowerCase().includes("cansad") ||
+    textoResumen.toLowerCase().includes("baja energia")
+      ? "bajo"
+      : textoResumen.toLowerCase().includes("alta energia") ||
+        textoResumen.toLowerCase().includes("flujo") ||
+        textoResumen.toLowerCase().includes("07:00")
+      ? "alto"
+      : "medio";
+
+  const resultadoDetectado: "exito" | "neutro" | "fallo" =
+    textoResumen.toLowerCase().includes("fracas") ||
+    textoResumen.toLowerCase().includes("abandono") ||
+    textoResumen.toLowerCase().includes("negativo (-)")
+      ? "neutro"
+      : "exito";
+
+  return {
+    id: `VIV-SES-${fechaIso}-${String(index + 1).padStart(2, "0")}`,
+    fecha: fechaIso,
+    rama_id: conv.rama_id || rama,
+    tags_mecanismo: tags,
+    contexto_situacional: {
+      momento: (secContexto || conv.title || "Sesion previa").slice(0, 140),
+      nivel_energia: nivelEnergiaDetectado,
+      factores_externos: (secHistoria || conv.title || "Contexto de sesion").slice(0, 160),
+    },
+    detonante_exacto: (conv.title ? `${conv.title}: ${secHistoria.slice(0, 120)}` : secHistoria.slice(0, 140)) || textoResumen.slice(0, 140),
+    reaccion_inicial: (secPatrones || secInterpretacion || "Patron conductual observado en la sesion").slice(0, 160),
+    solucion_aplicada: (secDecisiones || textoResumen.slice(-200)).slice(0, 200),
+    resultado: resultadoDetectado,
+    inmutable: true,
+  };
+}
+
+export function transformarEstrategiaAFicha(
+  strat: Strategy,
+  index: number
+): FichaVivenciaInmutable {
+  const { rama, tags } = detectarRamaYTags(`${strat.name} ${strat.situation} ${strat.result} ${strat.reason || ""}`);
+  const fechaIso = (strat.createdAt || new Date().toISOString()).split("T")[0];
+
+  return {
+    id: `VIV-EST-${fechaIso}-${String(index + 1).padStart(2, "0")}`,
+    fecha: fechaIso,
+    rama_id: strat.rama_id || rama,
+    tags_mecanismo: strat.tags_mecanismo && strat.tags_mecanismo.length > 0 ? strat.tags_mecanismo : tags,
+    contexto_situacional: {
+      momento: strat.situation.slice(0, 140),
+      nivel_energia: strat.resultType === "positivo" ? "alto" : "bajo",
+      factores_externos: (strat.reason || "Estrategia evaluada empiricamente").slice(0, 140),
+    },
+    detonante_exacto: strat.situation.slice(0, 140),
+    reaccion_inicial: strat.resultType === "negativo" ? `Conducta descartada: ${strat.name}` : `Aplicacion ante: ${strat.situation}`,
+    solucion_aplicada: `${strat.name} -> ${strat.result}`.slice(0, 180),
+    resultado: strat.resultType === "positivo" ? "exito" : "fallo",
+    inmutable: true,
+  };
+}
+
+export function transformarMemoriaViejaAFicha(
+  mem: Memory,
+  index: number
+): FichaVivenciaInmutable {
+  if (mem.fichaInmutable && mem.fichaInmutable.detonante_exacto) {
+    return { ...mem.fichaInmutable, inmutable: true };
+  }
+  return asegurarFichaInmutable(mem, index + 1);
+}
+

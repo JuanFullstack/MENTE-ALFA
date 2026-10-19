@@ -13,6 +13,7 @@ import {
   Decision,
   CurrentState,
   TacticalAnalysisBlock,
+  ArbolMemoriaJerarquico,
 } from "../types";
 
 export const RAW_BASE_CONTEXT = `## Perfil General
@@ -109,7 +110,11 @@ export const CATALOGO_TAGS_MECANISMO: Array<{ tag: string; keywords: string[] }>
   },
   {
     tag: "#busqueda_aprobacion",
-    keywords: ["rechazo", "que diran", "aprobacion", "validacion", "timidez", "vergüenza", "quedar mal", "tonto", "mirada", "atractivo", "social"],
+    keywords: [
+      "rechazo", "que diran", "aprobacion", "validacion", "timidez", "vergüenza",
+      "quedar mal", "tonto", "mirada", "atractivo", "social", "boliche", "inseguridad",
+      "aceptacion", "ansiedad social", "fiesta", "salida", "chica", "mujer", "descaro"
+    ],
   },
   {
     tag: "#ansiedad_examen",
@@ -155,6 +160,9 @@ export function detectarRamaYTags(
     "gente", "social", "hablar", "persona", "mujer", "chica", "amigo", "pareja",
     "familia", "conversacion", "rechazo", "aprobacion", "timidez", "carisma", "humor",
     "espontaneo", "da igual", "video", "camara", "exposicion", "reunion", "vinculo", "relacion",
+    "boliche", "boliches", "inseguridad", "aceptacion", "ansiedad social", "fiesta", "salida",
+    "descaro", "desinhibicion", "validacion", "atractivo", "encare", "conocer gente", "miedo al rechazo",
+    "autoestima social",
   ];
   const kwHabitos = [
     "energia", "cansado", "fatiga", "dormir", "sueño", "meditar", "meditacion", "nsdr",
@@ -167,8 +175,8 @@ export function detectarRamaYTags(
     else if (contextoCombinado.includes(kw)) scoreRamas.proyectos += 1;
   }
   for (const kw of kwVinculos) {
-    if (ultimoTexto.includes(kw)) scoreRamas.vinculos += 3;
-    else if (contextoCombinado.includes(kw)) scoreRamas.vinculos += 1;
+    if (ultimoTexto.includes(kw)) scoreRamas.vinculos += 4;
+    else if (contextoCombinado.includes(kw)) scoreRamas.vinculos += 2;
   }
   for (const kw of kwHabitos) {
     if (ultimoTexto.includes(kw)) scoreRamas.habitos += 3;
@@ -176,10 +184,10 @@ export function detectarRamaYTags(
   }
 
   let rama: RamaTematica = "habitos";
-  if (scoreRamas.proyectos >= scoreRamas.vinculos && scoreRamas.proyectos >= scoreRamas.habitos && scoreRamas.proyectos > 0) {
-    rama = "proyectos";
-  } else if (scoreRamas.vinculos >= scoreRamas.proyectos && scoreRamas.vinculos >= scoreRamas.habitos && scoreRamas.vinculos > 0) {
+  if (scoreRamas.vinculos >= scoreRamas.proyectos && scoreRamas.vinculos >= scoreRamas.habitos && scoreRamas.vinculos > 0) {
     rama = "vinculos";
+  } else if (scoreRamas.proyectos >= scoreRamas.vinculos && scoreRamas.proyectos >= scoreRamas.habitos && scoreRamas.proyectos > 0) {
+    rama = "proyectos";
   } else if (scoreRamas.habitos > 0) {
     rama = "habitos";
   } else {
@@ -375,8 +383,73 @@ export function construirHiloActivoTexto(
 }
 
 /**
+ * Consulta O(1) del árbol jerárquico por rama y tags de mecanismo:
+ * 1) arbol.ramas[ramaActiva]?.nodos[tag] (acceso O(1) a los nodos de la rama activa)
+ * 2) arbol.indiceTransversalTags[tag] (acceso O(1) a vivencias de otras ramas con el mismo mecanismo psicológico para hacer analogía)
+ * 3) arbol.ramas[ramaActiva]?.fichas_recientes_ids (últimas vivencias de esa misma rama si faltan completar las maxFichas)
+ */
+export function consultarArbolPorRamaYNodo(
+  arbol: ArbolMemoriaJerarquico,
+  ramaActiva: RamaTematica,
+  tagsConsulta: string[],
+  maxFichas = 5
+): FichaVivenciaInmutable[] {
+  if (!arbol || !arbol.ramas) return [];
+
+  const fichasSeleccionadas: FichaVivenciaInmutable[] = [];
+  const idsAgregados = new Set<string>();
+
+  const agregarFichaPorId = (id: string) => {
+    if (idsAgregados.has(id)) return;
+    const ficha = arbol.fichasPorId[id];
+    if (ficha) {
+      idsAgregados.add(id);
+      fichasSeleccionadas.push(ficha);
+    }
+  };
+
+  const ramaObj = arbol.ramas[ramaActiva];
+
+  // 1. Acceso directo O(1) a nodos de la rama activa que coincidan con los tags
+  if (ramaObj && ramaObj.nodos) {
+    for (const tag of tagsConsulta) {
+      const nodo = ramaObj.nodos[tag];
+      if (nodo && nodo.fichas_ids) {
+        for (const fId of nodo.fichas_ids) {
+          if (fichasSeleccionadas.length >= maxFichas) break;
+          agregarFichaPorId(fId);
+        }
+      }
+      if (fichasSeleccionadas.length >= maxFichas) break;
+    }
+  }
+
+  // 2. Acceso directo O(1) al índice transversal de tags (analogías de otras ramas)
+  if (fichasSeleccionadas.length < maxFichas && arbol.indiceTransversalTags) {
+    for (const tag of tagsConsulta) {
+      const idsTransversales = arbol.indiceTransversalTags[tag] || [];
+      for (const fId of idsTransversales) {
+        if (fichasSeleccionadas.length >= maxFichas) break;
+        agregarFichaPorId(fId);
+      }
+      if (fichasSeleccionadas.length >= maxFichas) break;
+    }
+  }
+
+  // 3. Si aún faltan, completar con las fichas recientes de la misma rama
+  if (fichasSeleccionadas.length < maxFichas && ramaObj && ramaObj.fichas_recientes_ids) {
+    for (const fId of ramaObj.fichas_recientes_ids) {
+      if (fichasSeleccionadas.length >= maxFichas) break;
+      agregarFichaPorId(fId);
+    }
+  }
+
+  return fichasSeleccionadas;
+}
+
+/**
  * FASE 3: PROMPT DE INFERENCIA FINAL REPARADO
- * Integra la poda de ramas, la memoria del hilo activo y el bloqueo contrastivo anti-genérico.
+ * Integra la poda de ramas, la memoria del hilo activo y el anclaje estricto en vivencias pasadas reales.
  */
 export function buildRepairedSystemPrompt(params: {
   ramaActiva: RamaTematica;
@@ -386,36 +459,36 @@ export function buildRepairedSystemPrompt(params: {
 }): string {
   const guiaRama = GUIAS_BASE_POR_RAMA[params.ramaActiva] || GUIAS_BASE_POR_RAMA.proyectos;
 
-  return `Eres un motor de análisis conductual y asesor táctico personal de Juan Francisco Cano. Tienes prohibido dar respuestas genéricas o de manual.
+  return `Eres el socio de pensamiento y asesor tactico personal de Juan Francisco Cano.
 
 <guia_base_rama>
 ${guiaRama}
-Etiquetas de mecanismo activadas en esta consulta: ${params.tagsDetectados.join(", ")}
+Nodos de mecanismo activados en el arbol: ${params.tagsDetectados.join(", ")}
 </guia_base_rama>
 
 <hilo_reciente>
 ${params.hiloRecienteTexto}
 </hilo_reciente>
 
-<fichas_vivencias_asociadas>
+<experiencias_pasadas_del_arbol>
 ${params.fichasCompactasTexto}
-</fichas_vivencias_asociadas>
+</experiencias_pasadas_del_arbol>
 
-DIRECTIVAS OPERATIVAS:
-1. CONTINUIDAD: Evalúa el <hilo_reciente>. No propongas acciones que ya fueron intentadas o descartadas en los últimos intercambios.
-2. FILTRO DE DESCARTE (ANTI-GENÉRICO): Identifica el cliché típico de autoayuda o gestión que cualquier IA daría a esta consulta ("organiza tu tiempo", "prioriza tareas", "respira hondo", "comunícate asertivamente") y descártalo explícitamente en el análisis.
-3. TRAZABILIDAD Y ANALOGÍA: Tu recomendación debe sustentarse exclusivamente en la solución probada de las <fichas_vivencias_asociadas> (citando su ID, ej. [VIV-...], incluso si proviene de otra rama por analogía de mecanismo) o en la <guia_base_rama>.
-4. TONO Y SINTAXIS: Español directo (voseo rioplatense conciso), frío, quirúrgico y basado en neurobiología/mecánica conductual. Cero saludos cordiales, cero relleno y cero preguntas vacías de cierre.
+REGLAS ESTRICTAS DE RETROALIMENTACION (PROHIBIDO INVENTAR CONSEJOS DE LA NADA):
+1. RETROALIMENTACION REAL: Tu respuesta NO puede salir de la nada ni inventar ejercicios genericos de psicologia que no esten en el sistema de Juan (prohibido inventar nombres raros como "regla de la asimetria intencional" o "mirar las plantas de los pies").
+2. ANCLAJE EN SUS VIVENCIAS Y METODOS: Tenes que responderle haciendo referencia directa a lo que ya vivio en <experiencias_pasadas_del_arbol> (mencionando la situacion previa o lo que ya probo y le funciono o le fallo) y aplicando exclusivamente las herramientas de su propio sistema en <guia_base_rama> (como el Metodo Transicion de 15 min, los 5 min de aislacion, el Grado de Libertad "da igual / no importa", la aceptacion con humor, el Metodo Pregunta-Respuesta, la regla 52/17, el protocolo de parar todo + NSDR ante fatiga, o el Dia No Cero).
+3. FILTRO OCULTO (<analisis_contextual>): Primero completa <analisis_contextual> indicando que vivencia pasada concreta estas tomando del arbol y que cliche descartas. Este bloque se oculta automaticamente en la interfaz.
+4. RESPUESTA CONVERSACIONAL (<consejo_tactico>): Dentro de <consejo_tactico> habla en segunda persona (voseo argentino natural, directo, de vos a vos), en 1 a 3 parrafos fluidos de charla real. PROHIBIDO usar asteriscos (**), listas numeradas (1., 2.), vinetas o subtitulos.
 
-ESTRUCTURA DE RESPUESTA OBLIGATORIA:
+ESTRUCTURA DE SALIDA OBLIGATORIA:
 <analisis_contextual>
-- Continuidad: [Qué punto exacto retoma del hilo y qué se evita repetir]
-- Consejo genérico descartado: [El cliché de manual que tienes PROHIBIDO dar y por qué fallaría biológicamente aquí]
-- Patrón detectado: [Relación exacta entre la situación actual y la ficha pasada [VIV-...] o regla de la rama]
+- Continuidad: [Punto exacto del hilo]
+- Consejo generico descartado: [Cliche o tecnica externa que NO vas a dar]
+- Patron detectado: [Que vivencia pasada exacta de <experiencias_pasadas_del_arbol> se conecta con hoy]
 </analisis_contextual>
 
 <consejo_tactico>
-[Instrucción directa, concreta y ejecutable en menos de 2 horas. Sin introducciones amables ni cierres motivacionales.]
+[Respuesta conversacional en prosa limpia, conectando explicitamente lo que cuenta hoy con sus experiencias pasadas y sus propios metodos, sin asteriscos ni listas.]
 </consejo_tactico>`;
 }
 
@@ -448,7 +521,7 @@ export function parseRepairedTacticalOutput(
   let consejoTactico = consejoMatch ? consejoMatch[1].trim() : "";
 
   if (!consejoTactico) {
-    // Si el modelo cerró</analisis_contextual> pero no puso tag de cierre en <consejo_tactico>
+    // Si el modelo cerró </analisis_contextual> pero no puso tag de cierre en <consejo_tactico>
     const splitAfterAnalisis = fullText.split(/<\/analisis_contextual>/i);
     if (splitAfterAnalisis.length > 1) {
       consejoTactico = splitAfterAnalisis[1].replace(/<\/?consejo_tactico>/gi, "").trim();
@@ -474,13 +547,13 @@ export function parseRepairedTacticalOutput(
 
   const fichasCitadas = Array.from(new Set((fullText.match(/VIV-[A-Z0-9-]+/g) || [])));
 
-  const formattedMessage = `**[ANÁLISIS CONTEXTUAL · RAMA ${ramaDetectada.toUpperCase()}]**
-• **Continuidad:** ${continuidad}
-• **Cliché descartado:** ${consejoGenericoDescartado}
-• **Patrón y trazabilidad:** ${patronDetectado}
-
-**DIRECTRIZ TÁCTICA (< 2h):**
-${consejoTactico}`;
+  // Formato 100% natural para el usuario: solo el consejo táctico sin asteriscos ni encabezados
+  const formattedMessage = consejoTactico
+    .replace(/\*\*/g, "")
+    .replace(/\*/g, "")
+    .replace(/^[0-9]+\.\s*/gm, "")
+    .replace(/^[-•]\s*/gm, "")
+    .trim();
 
   return {
     formattedMessage,

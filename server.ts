@@ -16,9 +16,10 @@ import {
   buildRepairedSystemPrompt,
   ASSISTANT_PREFILL_TAG,
   parseRepairedTacticalOutput,
+  consultarArbolPorRamaYNodo,
 } from "./src/lib/baseContext";
-import { consolidarNodosPatronesPorPunteros } from "./src/lib/storage";
-import { FichaVivenciaInmutable, RamaTematica } from "./src/types";
+import { consolidarNodosPatronesPorPunteros, construirArbolDesdeDatos } from "./src/lib/storage";
+import { FichaVivenciaInmutable, RamaTematica, Conversation } from "./src/types";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -428,12 +429,14 @@ Responde únicamente con el objeto JSON válido.`;
 /**
  * 1. Chat Táctico Reparado (Fases 2, 3 y 4: Poda por Ramas, Bloqueo Contrastivo, Prefill y Temp 0.25)
  */
-app.post("/api/chat", async (req, res) => {
+  app.post("/api/chat", async (req, res) => {
   try {
     const {
       messages,
       memories,
       strategies,
+      conversations,
+      previousSummaries,
       baseContext,
       currentState,
       decisions,
@@ -453,14 +456,29 @@ app.post("/api/chat", async (req, res) => {
       messages || []
     );
 
-    // FASE 2 & 4: Poda previa a la inferencia (máximo 3 a 5 fichas filtradas por rama y etiqueta)
-    const fichasPodadas = podarFichasParaInferencia(
-      memories || [],
-      strategies || [],
-      ramaActiva,
-      tagsDetectados,
-      5
-    );
+    // ESTRUCTURA DE ARBOL JERARQUICO CON HISTORIAL REAL DE VIVENCIAS (O(1))
+    const listaConvs: Conversation[] = (conversations && conversations.length > 0)
+      ? conversations
+      : (previousSummaries || []).map((s: string, idx: number) => ({
+          id: `conv-prev-${idx}`,
+          title: `Sesion previa ${idx + 1}`,
+          summary: s,
+          isSummarized: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }));
+
+    const arbol = construirArbolDesdeDatos(memories || [], listaConvs, strategies || []);
+    let fichasPodadas = consultarArbolPorRamaYNodo(arbol, ramaActiva, tagsDetectados, 5);
+    if (!fichasPodadas || fichasPodadas.length === 0) {
+      fichasPodadas = podarFichasParaInferencia(
+        memories || [],
+        strategies || [],
+        ramaActiva,
+        tagsDetectados,
+        5
+      );
+    }
     const fichasCompactasTexto = formatearFichasInmutablesCompactas(fichasPodadas, ramaActiva);
 
     // FASE 2: Memoria de Hilo Activo (últimas 3 a 5 interacciones sin repetir)
