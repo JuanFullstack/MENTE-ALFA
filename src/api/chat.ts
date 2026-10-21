@@ -10,13 +10,13 @@ import {
   obtenerHechoDosificadoSinRepetir,
   evaluarModoInteraccion,
   ModoInteraccionIA,
-} from "../src/lib/baseContext";
+} from "../lib/baseContext";
 import {
   clasificarFranjaHoraria,
   generarAuditoriaComoVamos,
   formatearAuditoriaParaPrompt,
-} from "../src/lib/progressAuditor";
-import { construirArbolDesdeDatos } from "../src/lib/storage";
+} from "../lib/progressAuditor";
+import { construirArbolDesdeDatos } from "../lib/storage";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const PRIMARY_MODEL = "qwen/qwen3.8-27b";
