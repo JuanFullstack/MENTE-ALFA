@@ -129,6 +129,74 @@ export const CATALOGO_TAGS_MECANISMO: Array<{ tag: string; keywords: string[] }>
     tag: "#sobreestimulacion_digital",
     keywords: ["pestañas", "celular", "redes", "youtube", "disperso", "distraido", "multitarea", "pantallas", "ruido mental"],
   },
+  {
+    tag: "#valor_intrinseco",
+    keywords: ["valor intrinseco", "autoestima", "inseguridad", "inferior", "comparacion", "estandar", "valgo poco", "sentirme menos"],
+  },
+  {
+    tag: "#alma_libre",
+    keywords: ["alma libre", "desinhibicion", "espontaneo", "divertirse", "sin filtro", "soltarse", "encarar", "santos", "artur", "lucho"],
+  },
+  {
+    tag: "#humor_adaptativo",
+    keywords: ["humor", "reirse", "plan cancelado", "chiste", "desdramatizar", "ligereza", "no pasa nada"],
+  },
+  {
+    tag: "#rigidez_perfeccionista",
+    keywords: ["rigidez", "todo o nada", "no salio como queria", "frustrado porque cambio", "obsesion", "control"],
+  },
+  {
+    tag: "#inmunidad_rechazo",
+    keywords: ["rechazo", "inmunidad rechazo", "miedo al no", "me dijeron que no", "ignorado", "desprecio", "miraron mal"],
+  },
+  {
+    tag: "#ideal_adaptado",
+    keywords: ["ideal adaptado", "ropa sucia", "imprevisto", "no es perfecto", "adaptar", "hacer lo que se puede", "plan b"],
+  },
+  {
+    tag: "#control_ira_leon",
+    keywords: ["ira", "enojo", "renan", "bronca", "león", "leon", "calmar la ira", "explotar", "discutir", "respirar hondo"],
+  },
+  {
+    tag: "#sabiduria_retroceso",
+    keywords: ["pedir perdon", "retroceder", "disculpa", "humildad", "bajar un cambio", "ceder"],
+  },
+  {
+    tag: "#gratitud_activa",
+    keywords: ["gratitud", "privilegio", "oportunidad", "agradecer", "queja", "agradecido", "salud"],
+  },
+  {
+    tag: "#arranque_645",
+    keywords: ["6:45", "alarma", "contar hasta 3", "agua fria", "audio horus", "levantarse", "cama"],
+  },
+  {
+    tag: "#inercia_sueno",
+    keywords: ["inercia", "sueño", "pesadez al despertar", "5 minutos mas", "quedarse acostado", "fiaca"],
+  },
+  {
+    tag: "#entreno_poder",
+    keywords: ["7:30", "entreno", "gimnasio", "pesas", "musculo", "atleta", "hombros", "espalda", "abdominales"],
+  },
+  {
+    tag: "#autoimagen_fisica",
+    keywords: ["espejo", "ropa ajustada", "porte", "definicion", "postura", "cuerpo fuerte"],
+  },
+  {
+    tag: "#estudio_ingenieria",
+    keywords: ["ingenieria", "estudio", "17:00", "5:00", "temporizador", "discord", "fisica", "codigo", "titulo"],
+  },
+  {
+    tag: "#tolerancia_confusion",
+    keywords: ["confusion", "desorientado", "primeros 15 minutos", "no entiendo nada", "mecanico", "complejo al inicio"],
+  },
+  {
+    tag: "#dia_no_cero",
+    keywords: ["dia no cero", "no cero", "al menos algo", "accion minima", "salvar el dia", "apatia"],
+  },
+  {
+    tag: "#demonio_interno",
+    keywords: ["demonio interno", "un video mas", "lol", "partida", "memes", "procrastinar", "mañana empiezo"],
+  },
 ];
 
 /**
@@ -632,9 +700,50 @@ COMO DETECTAR CUANDO LA MENTE O LOS INSTINTOS PRIMITIVOS ENGANAN A JUAN SIN QUE 
      * En lo social: no esperar reacciones ni resultados; acercarte con una pregunta simple y casual solo por practicar y divertirte, siendo un alma libre a la que le da igual si sale bien o mal.
 `;
 
+export type ModoInteraccionIA = 'sondeo_contexto_vago' | 'auditoria_como_vamos' | 'consejo_tactico_directo';
+
+export function evaluarModoInteraccion(
+  textoUsuario: string,
+  historialReciente: Array<{ sender?: string; role?: string; text?: string; content?: string }> = []
+): {
+  modo: ModoInteraccionIA;
+  motivo: string;
+} {
+  const txt = (textoUsuario || "").trim().toLowerCase();
+  const palabras = txt.split(/\s+/).filter(Boolean);
+
+  const regexComoVamos = /(como vamos|cómo vamos|como venimos|cómo venimos|cumpliendo los objetivos|mis objetivos|en que estoy fallando|en qué estoy fallando|dame un reporte|evaluame|evalúame|balance de la semana|balance del mes)/i;
+  if (regexComoVamos.test(txt)) {
+    return {
+      modo: "auditoria_como_vamos",
+      motivo: "El usuario solicitó auditoría de cumplimiento de objetivos, horarios de reporte, fallos y valoración de métodos exitosos.",
+    };
+  }
+
+  const ultimoMensajeAsistente = [...historialReciente]
+    .reverse()
+    .find((m) => m.sender === "assistant" || m.role === "assistant");
+  const asistentePreguntoRecien =
+    ultimoMensajeAsistente && (ultimoMensajeAsistente.text || ultimoMensajeAsistente.content || "").includes("?");
+
+  const tieneContextoEspecifico = /(tesis|facet|fisica|física|codigo|código|sql|examen|discord|lol|juego|alarma|6:45|7:30|entreno|gimnasio|boliche|santos|artur|bar|chica|mujer|renan|renán|ropa|reunion|reunión|ingles|inglés)/i.test(txt);
+
+  if (palabras.length <= 9 && !tieneContextoEspecifico && !asistentePreguntoRecien) {
+    return {
+      modo: "sondeo_contexto_vago",
+      motivo: "El mensaje es breve/vago y no especifica si el detonante es psicológico o productivo, por qué importa ahora o el nivel de energía.",
+    };
+  }
+
+  return {
+    modo: "consejo_tactico_directo",
+    motivo: "El mensaje contiene contexto suficiente para desenmascarar el autoengaño y prescribir el protocolo exacto.",
+  };
+}
+
 /**
  * FASE 3: PROMPT DE INFERENCIA FINAL REPARADO
- * Integra la poda de ramas, la memoria del hilo activo, el detector de autoengaño y la dosificación estricta de hechos reales.
+ * Integra la poda de ramas, la memoria del hilo activo, el detector de autoengaño y los 3 modos operativos.
  */
 export function buildRepairedSystemPrompt(params: {
   ramaActiva: RamaTematica;
@@ -642,43 +751,81 @@ export function buildRepairedSystemPrompt(params: {
   hiloRecienteTexto: string;
   fichasCompactasTexto: string;
   hechoDosificadoTexto?: string;
+  horaActualTexto?: string;
+  modoInteraccion?: ModoInteraccionIA;
+  auditoriaComoVamosTexto?: string;
 }): string {
-  return `Sos la voz mas lucida, persuasiva y despierta de Juan Francisco Cano. Hablas de vos a vos (voseo argentino directo, claro y firme).
+  const modo = params.modoInteraccion || "consejo_tactico_directo";
+  const horaInfo = params.horaActualTexto || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  const bloqueInstruccionPorModo =
+    modo === "sondeo_contexto_vago"
+      ? `MODO ACTIVO EN ESTE TURNO: [1. SONDEO CONTEXTUAL QUIRÚRGICO ANTE MENSAJE VAGO]
+Juan acaba de enviar un mensaje corto o vago (como "estoy mal", "me siento trabado" o "no tengo ganas") sin explicar el detonante ni el contexto.
+- PROHIBIDO adivinar qué le pasa o lanzarle un discurso largo a ciegas.
+- Respondé en UN SOLO PÁRRAFO CORTO (máximo 3 a 4 líneas):
+  1) Mencioná con naturalidad la hora actual (${horaInfo}) para anclar el momento del día.
+  2) Hacele exactamente 2 preguntas directas y cortas para destrabar el contexto y registrar el patrón horario:
+     • ¿Qué hecho puntual pasó recién (viene por el lado de estudio/productividad o por algo social/personal)?
+     • ¿Qué objetivo o tarea importante del día te está frenando esto ahora mismo y cómo estás de energía física del 1 al 10?`
+      : modo === "auditoria_como_vamos"
+      ? `MODO ACTIVO EN ESTE TURNO: [3. AUDITORÍA INTEGRAL "¿CÓMO VAMOS?"]
+Juan te está preguntando cómo vienen con los objetivos semanales/mensuales, los horarios de sus reportes y sus patrones.
+Basate ESTRICTAMENTE en los datos de <auditoria_objetivos_y_horarios> y respondé cubriendo estos 5 puntos con claridad y firmeza:
+1) CUMPLIMIENTO DE OBJETIVOS: Decile con números exactos cómo va en sus Objetivos de Crecimiento (Psicológicos) y en sus Objetivos Productivos (semanales y mensuales).
+2) EVALUACIÓN DEL HORARIO Y CONSTANCIA DE REPORTES (0 a 15 diarios): Evaluá a qué horas está haciendo los reportes, en qué franja horaria rinde mejor, en qué horario cae su ánimo/productividad y marcale sin filtro si hubo días o franjas con 0 reportes (puntos ciegos donde suele esconderse el "permitido" o la evasión).
+3) EN QUÉ ESTÁ FALLANDO Y PATRONES REPETIDOS: Señalá los obstáculos concretos donde tropezó esta semana.
+4) RETROALIMENTACIÓN CON EXPERIENCIAS NEGATIVAS DONDE TUVO ÉXITO (VALORACIÓN DEL MÉTODO): Citá las experiencias negativas psicológicas o productivas registradas en <auditoria_objetivos_y_horarios> y <experiencias_del_arbol> donde Juan estuvo en esa misma situación difícil pero TUVO ÉXITO, valorando explícitamente el método que aplicó esa vez (ej. levantarse antes de contar hasta 3 con agua fría y audio Horus, tolerar los primeros 15 min de confusión en estudio, respiración del león en lo de Renán, Ideal Adaptado con la ropa sucia o postura erguida en el boliche).
+5) ACCIÓN INMEDIATA PARA HOY (${horaInfo}): Dale una única consigna concreta para ganar la franja horaria actual.`
+      : `MODO ACTIVO EN ESTE TURNO: [2. CONSEJO TÁCTICO DIRECTO CON GUÍA PRÁCTICA]
+1) DESENMASCARAR EL AUTOENGAÑO: Mostrale cómo su mente o el demonio interno lo quiere engañar (el "permitido corto" de LOL/videos/memes, "mañana empiezo", buscar aprobación externa en el boliche o encapricharse cuando un escenario es imperfecto).
+2) APLICAR EL PROTOCOLO EXACTO DE SU GUÍA SEGÚN EL CASO:
+   - Si es Autoconfianza/Social: Postura erguida inmediata, mirada firme sin esquivar, respiración lenta y decretos ("Yo controlo cómo sentirme", "Si no cumplo los estándares de alguien, que se pudra") o actitud Alma Libre sin esperar resultado (como en Santos a las 3 AM, Artur o con Lucho).
+   - Si es Enojo/Imprevisto/Ropa sucia/Discusión: Congelamiento táctico al primer segundo, respirar "como un león calmando su ira", construir el Ideal Adaptado (buscar la mejor opción real dentro de la imperfección) o Sabiduría de Retroceso con humildad (como en lo de Renán).
+   - Si es Rutina Matutina (6:45 AM): Levantarse antes de contar hasta 3 sin negociar, directo al baño, agua fría y audio Horus (10 min) para entrenar a las 7:30 AM con auriculares.
+   - Si es Estudio/Ingeniería (5:00 PM / avisos Discord): Apagar TV, celular en No Molestar, temporizador, atravesar los primeros 10-15 min aceptando que "es normal sentirse desorientado la primera vez, es puramente mecánico", ver 1 video de YouTube para el panorama general y resolver solo para cerrar a las 11:00 PM rumbo al título de ingeniero y portafolio.
+   - Si es Apatía/Día Complicado: Confrontar al demonio interno ("¿Si sabés que tenés el control, qué carajo estás haciendo?", "Sé que esto me costará, pero dejaré de hacerlo"), encender enojo constructivo y ejecutar la acción mínima para no quedar en Día Cero.
+3) VALORAR EL MÉTODO DE ÉXITO PREVIO: Cuando cites una experiencia negativa superada, destacá por qué el método que aplicó Juan esa vez funcionó y pedile que repita exactamente esa mecánica ahora.`;
+
+  return `Sos la voz más lúcida, persuasiva y despierta de Juan Francisco Cano. Hablás de vos a vos (voseo argentino directo, claro y firme).
+
+<telemetria_horaria_real>
+Hora y franja actual del sistema: ${horaInfo}
+</telemetria_horaria_real>
+
+<instruccion_de_modo_activo>
+${bloqueInstruccionPorModo}
+</instruccion_de_modo_activo>
 
 <detector_de_autoengano_e_instintos_primitivos>
 ${MAPA_AUTOENGANO_E_INSTINTOS}
 </detector_de_autoengano_e_instintos_primitivos>
+
+<auditoria_objetivos_y_horarios>
+${params.auditoriaComoVamosTexto || "Auditoría disponible bajo demanda."}
+</auditoria_objetivos_y_horarios>
 
 <experiencias_del_arbol>
 ${params.fichasCompactasTexto}
 </experiencias_del_arbol>
 
 <hecho_real_habilitado_en_este_turno>
-${params.hechoDosificadoTexto || "NINGUNO EN ESTE TURNO (No cites casos pasados en este mensaje; usa persuasion directa en presente)."}
+${params.hechoDosificadoTexto || "Usar experiencias de la auditoría o persuasión directa en presente."}
 </hecho_real_habilitado_en_este_turno>
 
 <hilo_reciente>
 ${params.hiloRecienteTexto}
 </hilo_reciente>
 
-REGLAS INQUEBRANTABLES DE RESPUESTA:
-1. DESENMASCARAR EL AUTOENGANO INVISIBLE: Cuando Juan hable de falta de disciplina, postergacion, desgano, enojo o inseguridad, mostrale con claridad como su propia mente o sus instintos primitivos lo estan tratando de enganar sin que se de cuenta (con la trampa del "permitido corto", el "manana empiezo temprano", la bronca por buscar aprobacion o esperar condiciones ideales).
-2. DOSIFICACION ESTRICTA DE CASOS REALES (PROHIBIDO REPETIR):
-   - Mira <hecho_real_habilitado_en_este_turno>. Si dice "NINGUNO EN ESTE TURNO", tenes TERMINANTEMENTE PROHIBIDO nombrar Fisica 3, la casa de su hermana, el rubio del bar, Lucho, Artur o Renan.
-   - Incluso cuando haya un hecho habilitado, usalo solo si realmente suma fuerza al argumento, sin meterlo con calzador en todas las charlas.
-3. PROHIBIDO ASUMIR EL CONTEXTO ACTUAL: No inventes que hora es ("son las 5 de la tarde"), donde esta Juan hoy ni que esta haciendo ahora mismo si el no lo dijo en su mensaje actual.
-4. CERO PALABRAS TECNICAS Y CERO TITULOS DE METODOS: Prohibido decir "rumiando", "sistema limbico", "corteza prefrontal", "valle circadiano", "Metodo Yo Robot", "Grado de Libertad", "Metodo Transicion", "Franja Dorada" o "Ideal Adaptado". Explica siempre la accion viva con palabras simples ("perder el tiempo dandole vueltas", "respira como un leon calmando su ira", "actua como un robot que no siente nada y solo arranca", "busca la mejor opcion dentro de lo que hay hoy aunque no sea perfecto", "si sale mal, al carajo, vos determinas que es relevante y que ignorar").
-5. ROTACION DE ENFOQUE SI INSISTE: Si en <hilo_reciente> Juan insiste con lo mismo, cambia por completo el angulo (pasa de mostrarle la trampa mental -> a guiarlo en segunda persona presente sintiendo la postura y la respiracion -> o a darle un paso pequeno con temporizador para los primeros 10 minutos).
-6. FORMATO LIMPIO: Razonamiento oculto en <analisis_contextual> y respuesta visible en <consejo_tactico> escrita en 2 a 3 parrafos de prosa conversacional fluida, sin asteriscos (**), sin listas numeradas y sin subtitulos.
-
 ESTRUCTURA DE SALIDA OBLIGATORIA:
 <analisis_contextual>
-- Autoengano o instinto detectado: [Que excusa o impulso invisible esta operando]
-- Enfoque elegido y control de repeticion: [Por que este angulo es distinto al turno anterior]
+- Modo y especificidad: [${modo}]
+- Autoengano o instinto detectado: [Qué excusa, gatillo o patrón horario está operando a las ${horaInfo}]
+- Enfoque elegido y metodo valorado: [Qué protocolo o caso de éxito propio se activa]
 </analisis_contextual>
 
 <consejo_tactico>
-[Tu respuesta persuasiva y natural en voseo argentino, desenmascarando el autoengano y guiando la accion inmediata sin asteriscos ni nombres de tecnicas.]
+[Tu respuesta directa en voseo argentino cumpliendo estrictamente el MODO ACTIVO EN ESTE TURNO.]
 </consejo_tactico>`;
 }
 
@@ -726,11 +873,11 @@ export function parseRepairedTacticalOutput(
   };
 
   const autoenganoOContinuidad = extractLine(
-    /-\s*(?:Autoengano\s*o\s*instinto\s*detectado|Continuidad(?:\s*y\s*cambio\s*de\s*enfoque)?):\s*([^\n]+)/i,
+    /-\s*(?:Autoengano\s*o\s*instinto\s*detectado|Continuidad(?:\s*y\s*cambio\s*de\s*enfoque)?|Modo\s*y\s*especificidad):\s*([^\n]+)/i,
     "Evaluación directa sobre consulta activa."
   );
   const enfoqueElegido = extractLine(
-    /-\s*(?:Enfoque\s*elegido\s*y\s*control\s*de\s*repeticion|Consejo\s*gen[eé]rico\s*descartado):\s*([^\n]+)/i,
+    /-\s*(?:Enfoque\s*elegido\s*y\s*(?:control\s*de\s*repeticion|metodo\s*valorado)|Consejo\s*gen[eé]rico\s*descartado):\s*([^\n]+)/i,
     "Enfoque persuasivo en tiempo presente."
   );
   const patronDetectado = extractLine(

@@ -211,13 +211,121 @@ export interface Message {
   } | null;
 }
 
+export type TipoObjetivo = 'crecimiento_psicologico' | 'productivo';
+export type PeriodoObjetivo = 'semanal' | 'mensual';
+
+export type CodigoRasgo =
+  | 'PSI-1_autoconfianza'
+  | 'PSI-2_alma_libre'
+  | 'PSI-3_humor_error'
+  | 'PSI-4_inmunidad_rechazo'
+  | 'PSI-5_ideal_adaptado_leon'
+  | 'PSI-6_gratitud_activa'
+  | 'PROD-1_arranque_645'
+  | 'PROD-2_entreno_730'
+  | 'PROD-3_estudio_ingenieria'
+  | 'PROD-4_dia_no_cero';
+
+export type FranjaOperativa =
+  | '06:45_arranque'
+  | '07:30_entreno'
+  | '09:00_bloque_manana'
+  | '13:00_transicion_siesta'
+  | '17:00_estudio_ingenieria'
+  | '23:00_cierre_o_social';
+
 export interface DailyLog {
   id: string;
   createdAt: string;
-  energy: number;     // 1 to 10
-  motivation: number; // 1 to 10
-  stress: number;     // 1 to 10
+  dateKey?: string;                    // "YYYY-MM-DD"
+  horaExacta?: string;                 // "HH:mm"
+  franja?: FranjaOperativa;
+  // Métricas numéricas 1 a 10
+  energy: number;
+  motivation: number;
+  stress: number;
+  moodScore?: number;                  // Estado de ánimo (1-10)
+  productivityScore?: number;          // Estado de productividad (1-10)
+  // Vínculo con Objetivos y Rasgos
+  tipoReporte?: TipoObjetivo | 'estado_general';
+  objetivoId?: string;                 // ID del ObjetivoEstructurado
+  rasgoCodigo?: CodigoRasgo;
+  // Trazabilidad de Obstáculo vs Método Exitoso
+  huboObstaculo?: boolean;
+  detonante?: string;                  // Qué disparó el bajón o tentación
+  metodoAplicado?: string;             // Qué herramienta aplicó Juan
+  resultadoMetodo?: 'exito' | 'parcial' | 'fallo';
   note: string;
+}
+
+export interface ObjetivoEstructurado {
+  id: string;
+  titulo: string;
+  tipo: TipoObjetivo;                  // 'crecimiento_psicologico' | 'productivo'
+  periodo: PeriodoObjetivo;            // 'semanal' | 'mensual'
+  periodoClave: string;                // Ej: "2026-W43" o "2026-10"
+  rasgoCodigo: CodigoRasgo;
+  rama_id: RamaTematica;
+  tags_mecanismo: string[];
+  franjaCritica: FranjaOperativa;
+  meta: {
+    objetivoNumerico: number;          // Ej: 6 (días) o 80 (% éxito)
+    progresoActual: number;
+    unidad: 'dias' | 'episodios_exitosos' | 'bloques';
+  };
+  protocoloPasos: string[];
+  decretoClave: string;
+  obstaculosRegistrados: Array<{
+    fecha: string;
+    hora: string;
+    detonante: string;
+  }>;
+  exitosRegistrados: Array<{
+    fecha: string;
+    hora: string;
+    detonanteNegativo: string;
+    metodoAplicado: string;
+  }>;
+  estado: 'cumpliendo' | 'en_riesgo' | 'incumplido' | 'completado';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EstadisticaFranjaHoraria {
+  franja: FranjaOperativa;
+  label: string;
+  cantidadReportes: number;
+  promedioAnimo: number;
+  promedioProductividad: number;
+  promedioEnergia: number;
+  tasaExitoMetodos: number;
+  obstaculoFrecuente: string;
+}
+
+export interface CasoExitoRescatado {
+  idOrigen: string;
+  fecha: string;
+  hora: string;
+  rasgoOEtiqueta: string;
+  experienciaNegativa: string;
+  metodoAplicado: string;
+  tasaExitoHistorica: number;
+}
+
+export interface AuditoriaComoVamos {
+  fechaGeneracion: string;
+  reportesHoyCount: number;            // 0 a 15
+  promedioReportesPorDiaUltimos7d: number;
+  diasSinReportesUltimos7d: string[];  // Detecta silencio / puntos ciegos
+  franjasCiegasHoy: string[];
+  estadisticasPorFranja: EstadisticaFranjaHoraria[];
+  resumenObjetivos: {
+    psicologicos: ObjetivoEstructurado[];
+    productivos: ObjetivoEstructurado[];
+    porcentajeGlobalCumplimiento: number;
+  };
+  principalesFallosSemana: string[];
+  casosExitoParaValorar: CasoExitoRescatado[];
 }
 
 // Capa B: Estado Actual Dinámico

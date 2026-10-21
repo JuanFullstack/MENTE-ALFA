@@ -26,8 +26,10 @@ import {
   CurrentState,
   Decision,
   DailyReport,
-  SistemaMentalData
+  SistemaMentalData,
+  ObjetivoEstructurado
 } from "./types";
+import { clasificarFranjaHoraria, actualizarProgresoObjetivosConReporte } from "./lib/progressAuditor";
 import { 
   fetchConversacionesPB, 
   fetchMemoriasPB, 
@@ -66,6 +68,7 @@ export default function App() {
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [dailyReports, setDailyReports] = useState<DailyReport[]>([]);
   const [sistemaMental, setSistemaMental] = useState<SistemaMentalData>(ZenDB.getSistemaMental());
+  const [objetivosEstructurados, setObjetivosEstructurados] = useState<ObjetivoEstructurado[]>(() => ZenDB.getObjetivosEstructurados());
   const [activeConversationId, setActiveConversationId] = useState<string>("");
 
   // Initial load from localStorage / ZenDB and PocketBase (8 Collections)
@@ -281,10 +284,49 @@ export default function App() {
     ZenDB.setSistemaMental(newData);
   };
 
+  const handleUpdateObjetivos = (newObjs: ObjetivoEstructurado[]) => {
+    setObjetivosEstructurados(newObjs);
+    ZenDB.setObjetivosEstructurados(newObjs);
+  };
+
   const handleSaveQuickLog = (newLog: DailyLog) => {
     const updated = [newLog, ...logs];
     handleUpdateLogs(updated);
     createRegistroPB(newLog);
+
+    // Actualizar avance de objetivos estructurados
+    const objetivosActualizados = actualizarProgresoObjetivosConReporte(objetivosEstructurados, newLog);
+    handleUpdateObjetivos(objetivosActualizados);
+
+    // Si hubo obstáculo y el método tuvo éxito, registrar automáticamente como Ficha de Vivencia Inmutable
+    if (newLog.huboObstaculo && newLog.resultadoMetodo === "exito") {
+      const { horaExacta, dateKey } = clasificarFranjaHoraria(newLog.createdAt);
+      const nuevaMemoria: Memory = {
+        id: `mem-viv-${Date.now()}`,
+        content: `[Éxito ante obstáculo en ${horaExacta} hs] Detonante: ${newLog.detonante || "Fricción"}. Método que funcionó: ${newLog.metodoAplicado || newLog.note}`,
+        category: newLog.tipoReporte === "productivo" ? "proyectos" : "vinculos",
+        isApproved: true,
+        createdAt: new Date().toISOString(),
+        tags_mecanismo: newLog.rasgoCodigo ? [newLog.rasgoCodigo] : [],
+        fichaInmutable: {
+          id: `VIV-LOG-${Date.now()}`,
+          fecha: dateKey,
+          rama_id: newLog.tipoReporte === "productivo" ? "proyectos" : "vinculos",
+          tags_mecanismo: newLog.rasgoCodigo ? [newLog.rasgoCodigo] : ["#ideal_adaptado"],
+          contexto_situacional: {
+            momento: `${horaExacta} hs (${newLog.franja || "operativa"})`,
+            nivel_energia: newLog.energy >= 7 ? "alto" : "medio",
+            factores_externos: newLog.note.slice(0, 140),
+          },
+          detonante_exacto: newLog.detonante || "Fricción operativa",
+          reaccion_inicial: "Tentación o bajón detectado a tiempo",
+          solucion_aplicada: newLog.metodoAplicado || "Protocolo aplicado con éxito",
+          resultado: "exito",
+          inmutable: true,
+        },
+      };
+      handleSaveQuickMemory(nuevaMemoria);
+    }
   };
 
   const handleSaveQuickMemory = (newMem: Memory) => {
@@ -325,6 +367,7 @@ export default function App() {
             currentState={currentState}
             decisions={decisions}
             dailyReports={dailyReports}
+            objetivosEstructurados={objetivosEstructurados}
             activeConversationId={activeConversationId}
             onUpdateConversations={handleUpdateConversations}
             onUpdateMessages={handleUpdateMessages}
@@ -368,8 +411,10 @@ export default function App() {
             currentState={currentState}
             decisions={decisions}
             strategies={strategies}
+            objetivosEstructurados={objetivosEstructurados}
             onUpdateLogs={handleUpdateLogs}
             onUpdateDailyReports={handleUpdateDailyReports}
+            onUpdateObjetivos={handleUpdateObjetivos}
           />
         )}
 
@@ -403,6 +448,8 @@ export default function App() {
         isOpen={isQuickLogOpen}
         onClose={() => setIsQuickLogOpen(false)}
         onSaveLog={handleSaveQuickLog}
+        objetivosActivos={objetivosEstructurados}
+        reportesHoyCount={logs.filter((l) => clasificarFranjaHoraria(l.createdAt).dateKey === new Date().toISOString().split("T")[0]).length}
       />
 
       <AddMemoryModal

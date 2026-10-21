@@ -394,29 +394,71 @@ export async function deleteMemoriaPB(memId: string): Promise<boolean> {
  * 4. REGISTROS DIARIOS DE BIENESTAR (mentealfa_registros)
  * ============================================================================
  */
-export async function fetchRegistrosPB(): Promise<DailyLog[]> {
-  try {
-    const res = await fetch(`${POCKETBASE_URL}/api/collections/mentealfa_registros/records?sort=-created&perPage=200`, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
+const META_PREFIX = "[[META_V3:";
+const META_SUFFIX = "]]\n";
 
-    if (!res.ok) {
-      console.warn(`[PocketBase] No se pudieron listar los registros (${res.status})`);
-      return [];
+function serializarLogParaPB(log: DailyLog): string {
+  const meta = {
+    horaExacta: log.horaExacta,
+    franja: log.franja,
+    moodScore: log.moodScore,
+    productivityScore: log.productivityScore,
+    tipoReporte: log.tipoReporte,
+    objetivoId: log.objetivoId,
+    rasgoCodigo: log.rasgoCodigo,
+    huboObstaculo: log.huboObstaculo,
+    detonante: log.detonante,
+    metodoAplicado: log.metodoAplicado,
+    resultadoMetodo: log.resultadoMetodo,
+  };
+  return `${META_PREFIX}${JSON.stringify(meta)}${META_SUFFIX}${log.note || ""}`;
+}
+
+function deserializarLogDesdePB(item: any): DailyLog {
+  const rawNote: string = item.note || "";
+  let cleanNote = rawNote;
+  let parsedMeta: Partial<DailyLog> = {};
+
+  if (rawNote.startsWith(META_PREFIX)) {
+    const endIdx = rawNote.indexOf(META_SUFFIX);
+    if (endIdx !== -1) {
+      const jsonStr = rawNote.substring(META_PREFIX.length, endIdx);
+      cleanNote = rawNote.substring(endIdx + META_SUFFIX.length);
+      try {
+        parsedMeta = JSON.parse(jsonStr);
+      } catch {
+        // Fallback silencioso si el JSON fue editado manualmente
+      }
     }
+  }
 
+  return {
+    id: item.logId || item.id,
+    energy: Number(item.energy) || 5,
+    motivation: Number(item.motivation) || 5,
+    stress: Number(item.stress) || 5,
+    note: cleanNote,
+    createdAt: item.created || new Date().toISOString(),
+    ...parsedMeta,
+  };
+}
+
+export async function fetchRegistrosPB(limitDays = 14): Promise<DailyLog[]> {
+  try {
+    const fechaDesde = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .replace("T", " ");
+    const res = await fetch(
+      `${POCKETBASE_URL}/api/collections/mentealfa_registros/records?sort=-created&perPage=200&filter=(created>='${encodeURIComponent(fechaDesde)}')`,
+      {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+
+    if (!res.ok) return [];
     const data = await res.json();
-    const items = data.items || [];
-
-    return items.map((item: any) => ({
-      id: item.logId || item.id,
-      energy: Number(item.energy) || 5,
-      motivation: Number(item.motivation) || 5,
-      stress: Number(item.stress) || 5,
-      note: item.note || "",
-      createdAt: item.created || new Date().toISOString(),
-    }));
+    return (data.items || []).map(deserializarLogDesdePB);
   } catch (error) {
     console.warn("[PocketBase] Error al cargar registros diarios:", error);
     return [];
@@ -431,16 +473,13 @@ export async function createRegistroPB(log: DailyLog): Promise<{ success: boolea
       body: JSON.stringify({
         logId: log.id,
         energy: log.energy,
-        motivation: log.motivation,
+        motivation: log.productivityScore ?? log.motivation,
         stress: log.stress,
-        note: log.note,
+        note: serializarLogParaPB(log),
       }),
     });
 
-    if (!res.ok) {
-      throw new Error(`Error en POST registro (${res.status})`);
-    }
-
+    if (!res.ok) throw new Error(`Error en POST registro (${res.status})`);
     const data = await res.json();
     return { success: true, id: data.id };
   } catch (error) {

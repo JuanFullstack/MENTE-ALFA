@@ -6,12 +6,17 @@
 import React, { useState } from "react";
 import { 
   CalendarRange, Plus, Trash2, Sliders, NotepadText, Sparkles, 
-  CheckCircle2, AlertTriangle, ShieldCheck, FileText, ChevronRight, BookmarkCheck, RefreshCw
+  CheckCircle2, AlertTriangle, ShieldCheck, FileText, ChevronRight, BookmarkCheck, RefreshCw,
+  Target, Award, Clock, ArrowUpRight, Check, Zap, Brain, ShieldAlert, RotateCcw
 } from "lucide-react";
-import { DailyLog, DailyReport, Message, CurrentState, Decision, Strategy } from "../types";
+import { 
+  DailyLog, DailyReport, Message, CurrentState, Decision, Strategy,
+  ObjetivoEstructurado, TipoObjetivo, PeriodoObjetivo, CodigoRasgo, FranjaOperativa
+} from "../types";
 import { UserProfile } from "../lib/storage";
 import { getStoredGroqApiKey, getStoredGroqModel } from "../services/groqEvaluation";
 import { createRegistroPB, deleteRegistroPB } from "../services/pocketbaseService";
+import { PLANTILLAS_RASGOS_OFICIALES, clasificarFranjaHoraria } from "../lib/progressAuditor";
 
 interface RegistrosViewProps {
   logs: DailyLog[];
@@ -21,8 +26,10 @@ interface RegistrosViewProps {
   currentState: CurrentState;
   decisions: Decision[];
   strategies: Strategy[];
+  objetivosEstructurados?: ObjetivoEstructurado[];
   onUpdateLogs: (logs: DailyLog[]) => void;
   onUpdateDailyReports: (reports: DailyReport[]) => void;
+  onUpdateObjetivos?: (objs: ObjetivoEstructurado[]) => void;
 }
 
 export default function RegistrosView({ 
@@ -33,10 +40,24 @@ export default function RegistrosView({
   currentState, 
   decisions, 
   strategies, 
+  objetivosEstructurados = [],
   onUpdateLogs, 
-  onUpdateDailyReports 
+  onUpdateDailyReports,
+  onUpdateObjetivos,
 }: RegistrosViewProps) {
-  const [activeSubTab, setActiveSubTab] = useState<"reportes" | "rapidos">("reportes");
+  const [activeSubTab, setActiveSubTab] = useState<"objetivos" | "reportes" | "rapidos">("objetivos");
+
+  // Estado del creador de objetivos
+  const [isCrearObjOpen, setIsCrearObjOpen] = useState(false);
+  const [nuevoTipo, setNuevoTipo] = useState<TipoObjetivo>("crecimiento_psicologico");
+  const [nuevoPeriodo, setNuevoPeriodo] = useState<PeriodoObjetivo>("semanal");
+  const [plantillaSeleccionada, setPlantillaSeleccionada] = useState<CodigoRasgo | "">("PSI-1_autoconfianza");
+  const [formTitulo, setFormTitulo] = useState(PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].titulo);
+  const [formMetaNum, setFormMetaNum] = useState(PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].metaSugeridaSemanal);
+  const [formMetaUnidad, setFormMetaUnidad] = useState<"dias" | "episodios_exitosos" | "bloques">("episodios_exitosos");
+  const [formFranja, setFormFranja] = useState<FranjaOperativa>("23:00_cierre_o_social");
+  const [formDecreto, setFormDecreto] = useState(PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].decretoClave);
+  const [formProtocolo, setFormProtocolo] = useState(PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].protocoloPasos.join("\n"));
 
   // Quick log slider states
   const [energy, setEnergy] = useState(6);
@@ -58,75 +79,218 @@ export default function RegistrosView({
   const [manualPatterns, setManualPatterns] = useState("");
   const [manualGeneralNote, setManualGeneralNote] = useState("");
 
+  const hoyIso = new Date().toISOString().split("T")[0];
+  const reportesHoyCount = (logs || []).filter((l) => clasificarFranjaHoraria(l.createdAt).dateKey === hoyIso).length;
+
+  const objetivosPsicologicos = (objetivosEstructurados || []).filter((o) => o.tipo === "crecimiento_psicologico");
+  const objetivosProductivos = (objetivosEstructurados || []).filter((o) => o.tipo === "productivo");
+  
+  const porcentajeCumplimientoGlobal =
+    (objetivosEstructurados || []).length > 0
+      ? Math.round(
+          (objetivosEstructurados.reduce(
+            (acc, o) => acc + Math.min(1, o.meta.progresoActual / Math.max(1, o.meta.objetivoNumerico)),
+            0
+          ) /
+            objetivosEstructurados.length) *
+            100
+        )
+      : 0;
+
+  // Manejo de plantillas oficiales
+  const handleSeleccionarPlantilla = (codigo: CodigoRasgo) => {
+    setPlantillaSeleccionada(codigo);
+    const p = PLANTILLAS_RASGOS_OFICIALES[codigo];
+    if (p) {
+      setNuevoTipo(p.tipo);
+      setFormTitulo(p.titulo);
+      setFormMetaNum(nuevoPeriodo === "mensual" ? p.metaSugeridaSemanal * 3 : p.metaSugeridaSemanal);
+      setFormMetaUnidad(p.unidad);
+      setFormFranja(p.franjaCritica);
+      setFormDecreto(p.decretoClave);
+      setFormProtocolo(p.protocoloPasos.join("\n"));
+    }
+  };
+
+  const handleCrearObjetivo = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formTitulo.trim()) return;
+
+    const p = plantillaSeleccionada ? PLANTILLAS_RASGOS_OFICIALES[plantillaSeleccionada] : null;
+    const nuevoObj: ObjetivoEstructurado = {
+      id: `OBJ-${Date.now()}`,
+      titulo: formTitulo.trim(),
+      tipo: nuevoTipo,
+      periodo: nuevoPeriodo,
+      periodoClave: nuevoPeriodo === "semanal" ? "Semana Actual" : "Mes Actual",
+      rasgoCodigo: (plantillaSeleccionada || "PSI-1_autoconfianza") as CodigoRasgo,
+      rama_id: p ? p.rama_id : nuevoTipo === "crecimiento_psicologico" ? "vinculos" : "proyectos",
+      tags_mecanismo: p ? p.tags_mecanismo : [],
+      franjaCritica: formFranja,
+      meta: {
+        objetivoNumerico: Number(formMetaNum) || 5,
+        progresoActual: 0,
+        unidad: formMetaUnidad,
+      },
+      protocoloPasos: formProtocolo.split("\n").map((s) => s.trim()).filter(Boolean),
+      decretoClave: formDecreto.trim(),
+      obstaculosRegistrados: [],
+      exitosRegistrados: [],
+      estado: "cumpliendo",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const actualizados = [nuevoObj, ...(objetivosEstructurados || [])];
+    onUpdateObjetivos?.(actualizados);
+    setIsCrearObjOpen(false);
+  };
+
+  const handleEliminarObjetivo = (id: string) => {
+    const actualizados = (objetivosEstructurados || []).filter((o) => o.id !== id);
+    onUpdateObjetivos?.(actualizados);
+  };
+
+  const handleIncrementarProgreso = (id: string) => {
+    const info = clasificarFranjaHoraria();
+    const actualizados = (objetivosEstructurados || []).map((o) => {
+      if (o.id !== id) return o;
+      const nuevoProg = Math.min(o.meta.objetivoNumerico, o.meta.progresoActual + 1);
+      const nuevoExito = {
+        fecha: info.dateKey,
+        hora: info.horaExacta,
+        detonanteNegativo: "Avance directo manual",
+        metodoAplicado: o.protocoloPasos[0] || "Ejecución de protocolo",
+      };
+      return {
+        ...o,
+        meta: { ...o.meta, progresoActual: nuevoProg },
+        exitosRegistrados: [nuevoExito, ...o.exitosRegistrados].slice(0, 15),
+        estado: nuevoProg >= o.meta.objetivoNumerico ? ("completado" as const) : o.estado,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    onUpdateObjetivos?.(actualizados);
+  };
+
+  const handleResetProgreso = (id: string) => {
+    const actualizados = (objetivosEstructurados || []).map((o) => {
+      if (o.id !== id) return o;
+      return {
+        ...o,
+        meta: { ...o.meta, progresoActual: 0 },
+        estado: "cumpliendo" as const,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    onUpdateObjetivos?.(actualizados);
+  };
+
   // Save quick numeric log
   const handleSaveLog = (e: React.FormEvent) => {
     e.preventDefault();
+    const info = clasificarFranjaHoraria();
 
     const newLog: DailyLog = {
       id: `log-${Date.now()}`,
       createdAt: new Date().toISOString(),
+      dateKey: info.dateKey,
+      horaExacta: info.horaExacta,
+      franja: info.franja,
       energy,
       motivation,
       stress,
-      note: note.trim() || "Sin notas escritas.",
+      moodScore: energy,
+      productivityScore: motivation,
+      note: note.trim() || `[${info.horaExacta}] Registro rápido del estado emocional.`,
     };
 
     onUpdateLogs([newLog, ...logs]);
-    createRegistroPB(newLog).catch(console.warn);
+    createRegistroPB(newLog);
     setNote("");
-    setEnergy(6);
-    setMotivation(7);
-    setStress(4);
   };
 
   const handleDeleteLog = (id: string) => {
     onUpdateLogs(logs.filter((l) => l.id !== id));
-    deleteRegistroPB(id).catch(console.warn);
+    deleteRegistroPB(id);
   };
 
   const handleDeleteReport = (id: string) => {
     onUpdateDailyReports(dailyReports.filter((r) => r.id !== id));
   };
 
-  // Generate Structured Daily Report using AI (Llama 3.3 / Gemini)
+  // Generador de reporte diario con IA
   const handleGenerateAIDailyReport = async () => {
     setIsGeneratingReport(true);
     setReportError(null);
 
-    const todayDateStr = new Date().toISOString().split("T")[0];
-    const todaysMessages = messages.filter((m) => m.createdAt.startsWith(todayDateStr) || true).slice(-15);
-    const todaysLogs = logs.filter((l) => l.createdAt.startsWith(todayDateStr) || true).slice(-4);
+    const todayIso = new Date().toISOString().split("T")[0];
+    const todayMsgs = messages.filter((m) => m.timestamp.startsWith(todayIso));
+    const todayLogs = logs.filter((l) => l.createdAt.startsWith(todayIso));
+
+    if (todayMsgs.length === 0 && todayLogs.length === 0) {
+      setReportError("No hay conversaciones ni registros de hoy para compilar el reporte.");
+      setIsGeneratingReport(false);
+      return;
+    }
+
+    const apiKey = getStoredGroqApiKey();
+    if (!apiKey) {
+      setReportError("Falta la API Key de Groq en Configuración.");
+      setIsGeneratingReport(false);
+      return;
+    }
+
+    const promptText = `Sos el asistente de Juan Francisco Cano. Compila un balance estructurado del día de hoy (${todayIso}) en formato JSON estricto.
+DATOS DE HOY:
+Mensajes: ${todayMsgs.map((m) => `${m.sender}: ${m.text}`).join("\n")}
+Registros: ${todayLogs.map((l) => `E:${l.energy} M:${l.motivation} S:${l.stress} - ${l.note}`).join("\n")}
+
+Responde UNICAMENTE con un JSON con esta estructura exacta:
+{
+  "goals": ["meta 1", "meta 2"],
+  "results": ["resultado 1", "resultado 2"],
+  "problems": ["problema o bloqueo"],
+  "decisions": ["decision tomada"],
+  "projectStatus": "Resumen breve del avance",
+  "observedPatterns": ["patron observado"],
+  "generalNote": "Reflexion de cierre directa y honesta"
+}`;
 
     try {
-      const groqKey = getStoredGroqApiKey();
-      const groqModel = getStoredGroqModel();
-
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (groqKey) {
-        headers["x-groq-api-key"] = groqKey;
-        headers["x-groq-model"] = groqModel;
-      }
-
-      const response = await fetch("/api/daily-report", {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
         body: JSON.stringify({
-          messages: todaysMessages,
-          logs: todaysLogs,
-          date: todayDateStr,
-          profile,
-          currentState,
-          decisions,
-          strategies,
+          model: getStoredGroqModel(),
+          messages: [{ role: "user", content: promptText }],
+          temperature: 0.2,
+          response_format: { type: "json_object" },
         }),
       });
 
-      if (!response.ok) {
-        throw new Error("No se pudo generar el reporte diario estructurado.");
-      }
+      if (!res.ok) throw new Error(`Error en API Groq (${res.status})`);
+      const data = await res.json();
+      const rawJson = data.choices[0]?.message?.content || "{}";
+      const parsed = JSON.parse(rawJson);
 
-      const data: DailyReport = await response.json();
-      onUpdateDailyReports([data, ...dailyReports]);
+      const newReport: DailyReport = {
+        id: `rep-${Date.now()}`,
+        date: todayIso,
+        goals: parsed.goals || [],
+        results: parsed.results || [],
+        problems: parsed.problems || [],
+        decisions: parsed.decisions || [],
+        projectStatus: parsed.projectStatus || "En progreso",
+        observedPatterns: parsed.observedPatterns || [],
+        generalNote: parsed.generalNote || "Reporte generado automáticamente.",
+        createdAt: new Date().toISOString(),
+      };
+
+      onUpdateDailyReports([newReport, ...dailyReports]);
     } catch (err: any) {
       console.error(err);
       setReportError(err.message || "Error al generar reporte diario.");
@@ -186,19 +350,30 @@ export default function RegistrosView({
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#EAE2D6] pb-6">
         <div className="flex items-center gap-3">
           <div className="h-12 w-12 rounded-2xl bg-[#8BA888] text-white flex items-center justify-center shadow-lg shadow-[#8BA888]/10 shrink-0">
-            <CalendarRange className="h-6 w-6" />
+            <Target className="h-6 w-6" />
           </div>
           <div>
-            <h2 className="text-xl font-bold text-[#2D332D]">Reportes Diarios y Bitácora</h2>
+            <h2 className="text-xl font-bold text-[#2D332D]">Objetivos y Bitácora Operativa</h2>
             <p className="text-xs text-[#7A7167] mt-0.5">
-              Capa C: Qué ocurrió realmente en cada jornada (Objetivos vs Resultados, Problemas y Decisiones).
+              Crecimiento Psicológico vs. Disciplina Productiva · Telemetría horaria de 0 a 15 reportes diarios.
             </p>
           </div>
         </div>
 
-        {/* Action buttons & Tab switcher */}
-        <div className="flex items-center gap-2">
+        {/* Subtab Switcher */}
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex bg-[#F5F1E8] p-1 rounded-xl border border-[#EAE2D6]">
+            <button
+              onClick={() => setActiveSubTab("objetivos")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                activeSubTab === "objetivos"
+                  ? "bg-white text-[#2D332D] shadow-xs"
+                  : "text-[#7A7167] hover:text-[#2D332D]"
+              }`}
+            >
+              <Target className="h-3.5 w-3.5 text-[#6D856B]" />
+              <span>Objetivos ({(objetivosEstructurados || []).length})</span>
+            </button>
             <button
               onClick={() => setActiveSubTab("reportes")}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
@@ -207,7 +382,7 @@ export default function RegistrosView({
                   : "text-[#7A7167] hover:text-[#2D332D]"
               }`}
             >
-              Reportes Estructurados ({dailyReports.length})
+              Balances ({dailyReports.length})
             </button>
             <button
               onClick={() => setActiveSubTab("rapidos")}
@@ -217,7 +392,7 @@ export default function RegistrosView({
                   : "text-[#7A7167] hover:text-[#2D332D]"
               }`}
             >
-              Registros Rápidos ({logs.length})
+              Check-ins ({logs.length})
             </button>
           </div>
 
@@ -235,6 +410,16 @@ export default function RegistrosView({
               <span>{isGeneratingReport ? "Generando..." : "Generar con IA"}</span>
             </button>
           )}
+
+          {activeSubTab === "objetivos" && (
+            <button
+              onClick={() => setIsCrearObjOpen(!isCrearObjOpen)}
+              className="flex items-center gap-1.5 py-2 px-3.5 bg-[#8BA888] hover:bg-[#6D856B] text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>{isCrearObjOpen ? "Cerrar Formulario" : "Nuevo Objetivo"}</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -245,6 +430,527 @@ export default function RegistrosView({
             <p className="font-bold">Error al generar reporte</p>
             <p className="mt-0.5">{reportError}</p>
           </div>
+        </div>
+      )}
+
+      {/* ========================================================
+          SUBTAB 0: GESTOR DE OBJETIVOS SEMANALES Y MENSUALES
+          ======================================================== */}
+      {activeSubTab === "objetivos" && (
+        <div className="space-y-6">
+
+          {/* Tarjetas de Resumen KPI */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="bg-white border border-[#EAE2D6] rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] font-bold text-[#7A7167] uppercase tracking-wider block">Cumplimiento Global</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-2xl font-black text-[#6D856B]">{porcentajeCumplimientoGlobal}%</span>
+                <span className="text-xs text-[#7A7167]">promedio</span>
+              </div>
+            </div>
+            <div className="bg-white border border-[#EAE2D6] rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] font-bold text-[#7A7167] uppercase tracking-wider block">Psicológicos (Actitud)</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-2xl font-black text-[#2D332D]">{objetivosPsicologicos.length}</span>
+                <span className="text-xs text-[#7A7167]">activos</span>
+              </div>
+            </div>
+            <div className="bg-white border border-[#EAE2D6] rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] font-bold text-[#7A7167] uppercase tracking-wider block">Productivos (Disciplina)</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-2xl font-black text-[#2D332D]">{objetivosProductivos.length}</span>
+                <span className="text-xs text-[#7A7167]">activos</span>
+              </div>
+            </div>
+            <div className="bg-white border border-[#EAE2D6] rounded-2xl p-4 shadow-xs">
+              <span className="text-[10px] font-bold text-[#7A7167] uppercase tracking-wider block">Reportes de Hoy</span>
+              <div className="flex items-baseline gap-1.5 mt-1">
+                <span className="text-2xl font-black text-[#8BA888]">{reportesHoyCount}</span>
+                <span className="text-xs text-[#7A7167]">/ 15 máx</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Formulario Creador de Objetivos (colapsable) */}
+          {isCrearObjOpen && (
+            <form onSubmit={handleCrearObjetivo} className="bg-white border border-[#8BA888]/40 rounded-3xl p-6 shadow-md space-y-4 animate-in fade-in duration-150">
+              <div className="flex items-center justify-between border-b border-[#EAE2D6] pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-lg bg-[#8BA888]/20 text-[#6D856B] flex items-center justify-center">
+                    <Target className="h-4 w-4" />
+                  </div>
+                  <h3 className="text-sm font-bold text-[#2D332D]">Configurar Nuevo Objetivo Semanal / Mensual</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCrearObjOpen(false)}
+                  className="text-xs text-[#7A7167] hover:text-[#2D332D]"
+                >
+                  ✕ Cerrar
+                </button>
+              </div>
+
+              {/* Selector de Plantilla Oficial de 1 clic */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#4A443F] flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-[#8BA888]" />
+                  Cargar desde Plantilla Oficial de la Guía Práctica (1 Clic)
+                </label>
+                <select
+                  value={plantillaSeleccionada}
+                  onChange={(e) => handleSeleccionarPlantilla(e.target.value as CodigoRasgo)}
+                  className="w-full px-3 py-2 bg-[#FAF7F2] border border-[#EAE2D6] rounded-xl text-xs text-[#2D332D] font-medium outline-none focus:border-[#8BA888]"
+                >
+                  <option value="">-- Personalizado / Sin plantilla --</option>
+                  <optgroup label="🧠 Crecimiento Psicológico (Rasgos 1.1 a 1.6)">
+                    <option value="PSI-1_autoconfianza">PSI-1: Autoconfianza y Valor Intrínseco</option>
+                    <option value="PSI-2_alma_libre">PSI-2: Desinhibición ('Alma Libre')</option>
+                    <option value="PSI-3_humor_error">PSI-3: Humor y Ligereza ante el Error</option>
+                    <option value="PSI-4_inmunidad_rechazo">PSI-4: Inmunidad al Rechazo Social</option>
+                    <option value="PSI-5_ideal_adaptado_leon">PSI-5: León calmando ira e Ideal Adaptado</option>
+                    <option value="PSI-6_gratitud_activa">PSI-6: Gratitud Activa y Reencuadre</option>
+                  </optgroup>
+                  <optgroup label="⚡ Productivo / Disciplina Operativa (Rasgos 2.1 a 2.4)">
+                    <option value="PROD-1_arranque_645">PROD-1: Rutina 6:45 AM + Audio Horus</option>
+                    <option value="PROD-2_entreno_730">PROD-2: Entrenamiento Físico 7:30 AM</option>
+                    <option value="PROD-3_estudio_ingenieria">PROD-3: Bloque Estudio Ingeniería 5:00 PM</option>
+                    <option value="PROD-4_dia_no_cero">PROD-4: Combate a la Apatía / Día No Cero</option>
+                  </optgroup>
+                </select>
+              </div>
+
+              {/* Selectores de Tipo y Periodo */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#7A7167] uppercase">Tipo de Objetivo</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNuevoTipo("crecimiento_psicologico")}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                        nuevoTipo === "crecimiento_psicologico"
+                          ? "bg-[#8BA888]/20 border-[#8BA888] text-[#5A7358]"
+                          : "bg-white border-[#EAE2D6] text-[#7A7167]"
+                      }`}
+                    >
+                      🧠 Psicológico
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNuevoTipo("productivo")}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                        nuevoTipo === "productivo"
+                          ? "bg-[#8BA888]/20 border-[#8BA888] text-[#5A7358]"
+                          : "bg-white border-[#EAE2D6] text-[#7A7167]"
+                      }`}
+                    >
+                      ⚡ Productivo
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#7A7167] uppercase">Periodo</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNuevoPeriodo("semanal")}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                        nuevoPeriodo === "semanal"
+                          ? "bg-[#8BA888]/20 border-[#8BA888] text-[#5A7358]"
+                          : "bg-white border-[#EAE2D6] text-[#7A7167]"
+                      }`}
+                    >
+                      📅 Semanal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNuevoPeriodo("mensual")}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                        nuevoPeriodo === "mensual"
+                          ? "bg-[#8BA888]/20 border-[#8BA888] text-[#5A7358]"
+                          : "bg-white border-[#EAE2D6] text-[#7A7167]"
+                      }`}
+                    >
+                      🗓️ Mensual
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Título y Meta */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-[11px] font-bold text-[#7A7167] uppercase">Título del Objetivo</label>
+                  <input
+                    type="text"
+                    value={formTitulo}
+                    onChange={(e) => setFormTitulo(e.target.value)}
+                    placeholder="Ej: Sostener postura y mirada firme en el bar"
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs font-medium outline-none focus:border-[#8BA888]"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#7A7167] uppercase">Meta Numérica</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={formMetaNum}
+                      onChange={(e) => setFormMetaNum(Number(e.target.value))}
+                      className="w-20 px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs font-bold outline-none focus:border-[#8BA888]"
+                    />
+                    <select
+                      value={formMetaUnidad}
+                      onChange={(e) => setFormMetaUnidad(e.target.value as any)}
+                      className="flex-1 px-2 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs outline-none focus:border-[#8BA888]"
+                    >
+                      <option value="dias">días</option>
+                      <option value="episodios_exitosos">episodios</option>
+                      <option value="bloques">bloques</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Franja Crítica y Decreto */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-[#7A7167] uppercase">Franja Horaria Crítica</label>
+                  <select
+                    value={formFranja}
+                    onChange={(e) => setFormFranja(e.target.value as FranjaOperativa)}
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs outline-none focus:border-[#8BA888]"
+                  >
+                    <option value="06:45_arranque">06:45 AM (Alarma & Horus)</option>
+                    <option value="07:30_entreno">07:30 AM (Entrenamiento)</option>
+                    <option value="09:00_bloque_manana">09:00 AM (Bloque Mañana)</option>
+                    <option value="13:00_transicion_siesta">13:00 PM (Valle / Siesta)</option>
+                    <option value="17:00_estudio_ingenieria">17:00 PM (Estudio Ingeniería)</option>
+                    <option value="23:00_cierre_o_social">23:00 PM (Cierre / Social)</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-[11px] font-bold text-[#7A7167] uppercase">Decreto Clave de Reencuadre</label>
+                  <input
+                    type="text"
+                    value={formDecreto}
+                    onChange={(e) => setFormDecreto(e.target.value)}
+                    placeholder="Frase o decreto inquebrantable de control interno"
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs italic outline-none focus:border-[#8BA888]"
+                  />
+                </div>
+              </div>
+
+              {/* Protocolo Paso a Paso */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-[#7A7167] uppercase">Protocolo Paso a Paso (1 por línea)</label>
+                <textarea
+                  rows={3}
+                  value={formProtocolo}
+                  onChange={(e) => setFormProtocolo(e.target.value)}
+                  placeholder="Pasos mecánicos exactos sin cavilar..."
+                  className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs outline-none focus:border-[#8BA888] resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsCrearObjOpen(false)}
+                  className="px-4 py-2 border border-[#EAE2D6] rounded-xl text-xs font-bold text-[#7A7167]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-[#8BA888] hover:bg-[#6D856B] text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  <span>Guardar Objetivo</span>
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Paneles Paralelos: Psicológico vs Productivo */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            
+            {/* PANEL 1: CRECIMIENTO PSICOLÓGICO */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-[#EAE2D6] pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-lg bg-[#8BA888]/20 text-[#6D856B] flex items-center justify-center">
+                    <Brain className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[#2D332D]">Crecimiento Psicológico & Actitud</h3>
+                    <p className="text-[11px] text-[#7A7167]">Autoconfianza, desinhibición, humor e inmunidad al juicio.</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#8BA888]/15 text-[#5A7358]">
+                  {objetivosPsicologicos.length} activos
+                </span>
+              </div>
+
+              {objetivosPsicologicos.length === 0 ? (
+                <div className="bg-white border border-[#EAE2D6] rounded-3xl p-8 text-center space-y-2">
+                  <Brain className="h-8 w-8 text-[#A69D91] mx-auto" />
+                  <p className="text-xs text-[#7A7167]">No tienes objetivos de crecimiento psicológico activos.</p>
+                </div>
+              ) : (
+                objetivosPsicologicos.map((obj) => {
+                  const ratio = Math.min(1, obj.meta.progresoActual / Math.max(1, obj.meta.objetivoNumerico));
+                  const pct = Math.round(ratio * 100);
+
+                  return (
+                    <div
+                      key={obj.id}
+                      className="bg-white border border-[#EAE2D6] rounded-3xl p-5 shadow-xs space-y-3 relative group hover:border-[#8BA888]/50 transition"
+                    >
+                      {/* Header de la tarjeta */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FAF7F2] text-[#7A7167] border border-[#EAE2D6] uppercase">
+                              {obj.periodo}
+                            </span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              obj.estado === "completado"
+                                ? "bg-[#8BA888]/20 text-[#5A7358]"
+                                : obj.estado === "en_riesgo"
+                                ? "bg-[#D98E73]/20 text-[#B86E53]"
+                                : "bg-[#8BA888]/10 text-[#6D856B]"
+                            }`}>
+                              {obj.estado.toUpperCase()}
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-[#2D332D] mt-1.5">{obj.titulo}</h4>
+                        </div>
+                        <button
+                          onClick={() => handleEliminarObjetivo(obj.id)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-[#A69D91] hover:text-[#D98E73] rounded transition cursor-pointer"
+                          title="Eliminar objetivo"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      {/* Barra de Progreso y Botón +1 */}
+                      <div className="space-y-1.5 bg-[#FAF7F2] p-3 rounded-2xl border border-[#EAE2D6]/70">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="font-semibold text-[#7A7167]">
+                            Progreso: <strong className="text-[#2D332D]">{obj.meta.progresoActual}</strong> / {obj.meta.objetivoNumerico} {obj.meta.unidad}
+                          </span>
+                          <span className="font-bold text-[#6D856B]">{pct}%</span>
+                        </div>
+                        <div className="w-full bg-[#EAE2D6] h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-[#8BA888] h-full rounded-full transition-all duration-300"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center pt-1">
+                          <span className="text-[10px] text-[#A69D91] flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            Crítico: {obj.franjaCritica.replace("_", " ")}
+                          </span>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleResetProgreso(obj.id)}
+                              className="px-2 py-0.5 rounded-lg text-[10px] text-[#7A7167] hover:bg-[#EAE2D6] transition cursor-pointer"
+                              title="Reiniciar progreso"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleIncrementarProgreso(obj.id)}
+                              className="px-2.5 py-0.5 rounded-lg text-[10px] font-bold bg-[#8BA888] text-white hover:bg-[#6D856B] transition cursor-pointer flex items-center gap-1"
+                            >
+                              <Plus className="h-3 w-3" />
+                              <span>+1 Éxito</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Decreto Clave */}
+                      {obj.decretoClave && (
+                        <blockquote className="text-[11px] italic text-[#4A443F] bg-[#8BA888]/5 border-l-2 border-[#8BA888] pl-2.5 py-1">
+                          "{obj.decretoClave}"
+                        </blockquote>
+                      )}
+
+                      {/* Protocolo */}
+                      {obj.protocoloPasos.length > 0 && (
+                        <div className="space-y-1 text-[11px] text-[#7A7167]">
+                          <span className="font-bold text-[#4A443F] block">Protocolo de Acción:</span>
+                          <ul className="list-disc pl-4 space-y-0.5">
+                            {obj.protocoloPasos.slice(0, 3).map((p, idx) => (
+                              <li key={idx}>{p}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Éxitos y Obstáculos Recientes */}
+                      {obj.exitosRegistrados.length > 0 && (
+                        <div className="pt-2 border-t border-[#EAE2D6]/60">
+                          <span className="text-[10px] font-bold text-[#5A7358] uppercase block mb-1">
+                            ✓ Último éxito ({obj.exitosRegistrados[0].fecha} {obj.exitosRegistrados[0].hora} hs):
+                          </span>
+                          <p className="text-[11px] text-[#4A443F] bg-[#8BA888]/10 p-2 rounded-xl">
+                            <strong>Método valorado:</strong> {obj.exitosRegistrados[0].metodoAplicado}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* PANEL 2: DISCIPLINA PRODUCTIVA */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-[#EAE2D6] pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-lg bg-[#8BA888]/20 text-[#6D856B] flex items-center justify-center">
+                    <Zap className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[#2D332D]">Disciplina Productiva & Hábitos</h3>
+                    <p className="text-[11px] text-[#7A7167]">Rutina 6:45 AM, entreno 7:30, ingeniería 5:00 PM y día no cero.</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#8BA888]/15 text-[#5A7358]">
+                  {objetivosProductivos.length} activos
+                </span>
+              </div>
+
+              {objetivosProductivos.length === 0 ? (
+                <div className="bg-white border border-[#EAE2D6] rounded-3xl p-8 text-center space-y-2">
+                  <Zap className="h-8 w-8 text-[#A69D91] mx-auto" />
+                  <p className="text-xs text-[#7A7167]">No tienes objetivos productivos cargados.</p>
+                </div>
+              ) : (
+                objetivosProductivos.map((obj) => {
+                  const ratio = Math.min(1, obj.meta.progresoActual / Math.max(1, obj.meta.objetivoNumerico));
+                  const pct = Math.round(ratio * 100);
+
+                  return (
+                    <div
+                      key={obj.id}
+                      className="bg-white border border-[#EAE2D6] rounded-3xl p-5 shadow-xs space-y-3 relative group hover:border-[#8BA888]/50 transition"
+                    >
+                      {/* Header de la tarjeta */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FAF7F2] text-[#7A7167] border border-[#EAE2D6] uppercase">
+                              {obj.periodo}
+                            </span>
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              obj.estado === "completado"
+                                ? "bg-[#8BA888]/20 text-[#5A7358]"
+                                : obj.estado === "en_riesgo"
+                                ? "bg-[#D98E73]/20 text-[#B86E53]"
+                                : "bg-[#8BA888]/10 text-[#6D856B]"
+                            }`}>
+                              {obj.estado.toUpperCase()}
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-[#2D332D] mt-1.5">{obj.titulo}</h4>
+                        </div>
+                        <button
+                          onClick={() => handleEliminarObjetivo(obj.id)}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-[#A69D91] hover:text-[#D98E73] rounded transition cursor-pointer"
+                          title="Eliminar objetivo"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      {/* Barra de Progreso y Botón +1 */}
+                      <div className="space-y-1.5 bg-[#FAF7F2] p-3 rounded-2xl border border-[#EAE2D6]/70">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="font-semibold text-[#7A7167]">
+                            Cumplimiento: <strong className="text-[#2D332D]">{obj.meta.progresoActual}</strong> / {obj.meta.objetivoNumerico} {obj.meta.unidad}
+                          </span>
+                          <span className="font-bold text-[#6D856B]">{pct}%</span>
+                        </div>
+                        <div className="w-full bg-[#EAE2D6] h-2 rounded-full overflow-hidden">
+                          <div
+                            className="bg-[#8BA888] h-full rounded-full transition-all duration-300"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center pt-1">
+                          <span className="text-[10px] text-[#A69D91] flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            Franja: {obj.franjaCritica.replace("_", " ")}
+                          </span>
+                          <div className="flex gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleResetProgreso(obj.id)}
+                              className="px-2 py-0.5 rounded-lg text-[10px] text-[#7A7167] hover:bg-[#EAE2D6] transition cursor-pointer"
+                              title="Reiniciar progreso"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleIncrementarProgreso(obj.id)}
+                              className="px-2.5 py-0.5 rounded-lg text-[10px] font-bold bg-[#8BA888] text-white hover:bg-[#6D856B] transition cursor-pointer flex items-center gap-1"
+                            >
+                              <Plus className="h-3 w-3" />
+                              <span>+1 Día/Bloque</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Decreto Clave */}
+                      {obj.decretoClave && (
+                        <blockquote className="text-[11px] italic text-[#4A443F] bg-[#8BA888]/5 border-l-2 border-[#8BA888] pl-2.5 py-1">
+                          "{obj.decretoClave}"
+                        </blockquote>
+                      )}
+
+                      {/* Protocolo */}
+                      {obj.protocoloPasos.length > 0 && (
+                        <div className="space-y-1 text-[11px] text-[#7A7167]">
+                          <span className="font-bold text-[#4A443F] block">Pasos Operativos:</span>
+                          <ul className="list-disc pl-4 space-y-0.5">
+                            {obj.protocoloPasos.slice(0, 3).map((p, idx) => (
+                              <li key={idx}>{p}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Obstáculos y Éxitos Recientes */}
+                      {obj.obstaculosRegistrados.length > 0 && (
+                        <div className="pt-2 border-t border-[#EAE2D6]/60">
+                          <span className="text-[10px] font-bold text-[#D98E73] uppercase block mb-1">
+                            ⚠️ Fricción registrada ({obj.obstaculosRegistrados[0].hora} hs):
+                          </span>
+                          <p className="text-[11px] text-[#7A7167] bg-[#D98E73]/10 p-2 rounded-xl">
+                            {obj.obstaculosRegistrados[0].detonante}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+          </div>
+
         </div>
       )}
 
@@ -298,54 +1004,55 @@ export default function RegistrosView({
                       📅 {report.date}
                     </span>
                     {report.projectStatus && (
-                      <span className="text-[10px] text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-lg font-semibold">
+                      <span className="text-[10px] font-bold text-[#6D856B] bg-[#8BA888]/15 px-2 py-0.5 rounded-full">
                         {report.projectStatus}
                       </span>
                     )}
                   </div>
 
-                  {/* Section 1: Goals vs Results */}
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div className="bg-[#FBF9F4] p-3 rounded-2xl border border-[#EAE2D6]/70 space-y-1">
-                        <span className="text-[9px] font-bold text-[#7A7167] uppercase block">🎯 Objetivos</span>
-                        <ul className="space-y-1 text-[#2D332D]">
-                          {report.goals?.map((g, i) => (
-                            <li key={i} className="text-[11px] leading-tight">• {g}</li>
-                          ))}
+                  {/* Body grid */}
+                  <div className="space-y-3 text-xs">
+                    {report.goals && report.goals.length > 0 && (
+                      <div>
+                        <p className="font-bold text-[#7A7167] text-[10px] uppercase tracking-wider mb-1">
+                          🎯 Objetivos
+                        </p>
+                        <ul className="list-disc pl-4 space-y-0.5 text-[#4A443F]">
+                          {report.goals.map((g, i) => <li key={i}>{g}</li>)}
                         </ul>
                       </div>
+                    )}
 
-                      <div className="bg-emerald-50/60 p-3 rounded-2xl border border-emerald-200/70 space-y-1">
-                        <span className="text-[9px] font-bold text-emerald-800 uppercase block">✓ Resultado Real</span>
-                        <ul className="space-y-1 text-emerald-950">
-                          {report.results?.map((r, i) => (
-                            <li key={i} className="text-[11px] leading-tight font-medium">• {r}</li>
-                          ))}
+                    {report.results && report.results.length > 0 && (
+                      <div>
+                        <p className="font-bold text-[#6D856B] text-[10px] uppercase tracking-wider mb-1">
+                          ✓ Resultados
+                        </p>
+                        <ul className="list-disc pl-4 space-y-0.5 text-[#4A443F]">
+                          {report.results.map((r, i) => <li key={i}>{r}</li>)}
                         </ul>
                       </div>
-                    </div>
-                  </div>
+                    )}
 
-                  {/* Section 2: Problems & Decisions */}
-                  <div className="space-y-2 text-xs">
                     {report.problems && report.problems.length > 0 && (
-                      <div className="bg-rose-50/50 p-2.5 rounded-xl border border-rose-200/60 text-rose-950 space-y-0.5">
-                        <span className="text-[9px] font-bold text-rose-700 uppercase block">⚠️ Problemas / Bloqueos:</span>
-                        <p className="text-[11px] leading-relaxed">{report.problems.join("; ")}</p>
+                      <div>
+                        <p className="font-bold text-[#D98E73] text-[10px] uppercase tracking-wider mb-1">
+                          ⚠️ Fricciones / Bloqueos
+                        </p>
+                        <ul className="list-disc pl-4 space-y-0.5 text-[#4A443F]">
+                          {report.problems.map((p, i) => <li key={i}>{p}</li>)}
+                        </ul>
                       </div>
                     )}
 
                     {report.decisions && report.decisions.length > 0 && (
-                      <div className="bg-[#8BA888]/10 p-2.5 rounded-xl border border-[#8BA888]/30 text-[#2D332D] space-y-0.5">
-                        <span className="text-[9px] font-bold text-[#6D856B] uppercase block">💡 Decisiones del día:</span>
-                        <p className="text-[11px] leading-relaxed font-medium">{report.decisions.join("; ")}</p>
-                      </div>
-                    )}
-
-                    {report.observedPatterns && report.observedPatterns.length > 0 && (
-                      <div className="pt-1 text-[10px] text-[#7A7167]">
-                        <strong>Patrón observado:</strong> {report.observedPatterns.join("; ")}
+                      <div>
+                        <p className="font-bold text-[#7A7167] text-[10px] uppercase tracking-wider mb-1">
+                          ⚡ Decisiones Tomadas
+                        </p>
+                        <ul className="list-disc pl-4 space-y-0.5 text-[#4A443F]">
+                          {report.decisions.map((d, i) => <li key={i}>{d}</li>)}
+                        </ul>
                       </div>
                     )}
 
@@ -622,4 +1329,3 @@ export default function RegistrosView({
     </div>
   );
 }
-

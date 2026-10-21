@@ -50,7 +50,8 @@ import {
   StateUpdateSuggestion,
   AnalysisMetadata,
   DimensionalAxis,
-  ContextEvolutionReport
+  ContextEvolutionReport,
+  ObjetivoEstructurado
 } from "../types";
 import { UserProfile, ZenDB, construirArbolDesdeDatos } from "../lib/storage";
 import {
@@ -63,7 +64,14 @@ import {
   parseRepairedTacticalOutput,
   consultarArbolPorRamaYNodo,
   obtenerHechoDosificadoSinRepetir,
+  evaluarModoInteraccion,
+  ModoInteraccionIA,
 } from "../lib/baseContext";
+import {
+  clasificarFranjaHoraria,
+  generarAuditoriaComoVamos,
+  formatearAuditoriaParaPrompt,
+} from "../lib/progressAuditor";
 import { 
   getStoredGroqApiKey, 
   getStoredGroqModel, 
@@ -90,6 +98,7 @@ interface ChatViewProps {
   currentState: CurrentState;
   decisions: Decision[];
   dailyReports: DailyReport[];
+  objetivosEstructurados?: ObjetivoEstructurado[];
   profile: UserProfile;
   activeConversationId: string;
   onUpdateConversations: (convs: Conversation[]) => void;
@@ -113,6 +122,7 @@ export default function ChatView({
   currentState,
   decisions,
   dailyReports,
+  objetivosEstructurados = [],
   profile,
   activeConversationId,
   onUpdateConversations,
@@ -657,6 +667,13 @@ ${textToSummarize}`;
       const groqModel = getStoredGroqModel();
       const previousSummaries = getPreviousSummaries();
 
+      const infoHora = clasificarFranjaHoraria();
+      const horaActualTexto = `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
+      const activeThreadMsgs = updatedMessages.filter((m) => m.conversationId === activeConversationId);
+      const { modo: modoInteraccion } = evaluarModoInteraccion(userText, activeThreadMsgs);
+      const auditoriaObj = generarAuditoriaComoVamos(logs, objetivosEstructurados, memories, strategies);
+      const auditoriaComoVamosTexto = formatearAuditoriaParaPrompt(auditoriaObj);
+
       let data: any = null;
 
       try {
@@ -670,9 +687,9 @@ ${textToSummarize}`;
           method: "POST",
           headers,
           body: JSON.stringify({
-            messages: updatedMessages.filter((m) => m.conversationId === activeConversationId),
+            messages: activeThreadMsgs,
             memories: memories.filter((m) => m.isApproved),
-            logs: logs.slice(-5),
+            logs: logs,
             patterns: patterns,
             strategies: strategies,
             currentState: currentState,
@@ -680,6 +697,10 @@ ${textToSummarize}`;
             dailyReports: dailyReports,
             previousSummaries: previousSummaries,
             conversations: conversations.filter((c) => c.isSummarized && c.summary),
+            objetivosEstructurados,
+            horaActualTexto,
+            modoInteraccion,
+            auditoriaComoVamosTexto,
             baseContext: {
               userName: profile.userName,
               companionName: profile.companionName,
@@ -700,7 +721,6 @@ ${textToSummarize}`;
 
       if (!data || !data.message) {
         // Fallback directo a Groq Cloud con Arbol Jerarquico de Memoria
-        const activeThreadMsgs = updatedMessages.filter((m) => m.conversationId === activeConversationId);
         const { rama: ramaActiva, tags: tagsDetectados } = detectarRamaYTags(userText, activeThreadMsgs);
 
         const arbolLocal = construirArbolDesdeDatos(
@@ -733,6 +753,9 @@ ${textToSummarize}`;
           hiloRecienteTexto,
           fichasCompactasTexto,
           hechoDosificadoTexto,
+          horaActualTexto,
+          modoInteraccion,
+          auditoriaComoVamosTexto,
         });
 
         const convHistory = activeThreadMsgs
@@ -741,6 +764,11 @@ ${textToSummarize}`;
             role: (m.sender === "user" ? "user" : "assistant") as "user" | "assistant",
             content: m.text,
           }));
+
+        const prefillAUsar =
+          modoInteraccion === "sondeo_contexto_vago"
+            ? "<analisis_contextual>\n- Modo y especificidad: [sondeo_contexto_vago]"
+            : ASSISTANT_PREFILL_TAG;
 
         const groqResponse = await chatWithGroq(
           [
@@ -753,7 +781,7 @@ ${textToSummarize}`;
             jsonMode: false,
             temperature: 0.25,
             max_tokens: 900,
-            assistantPrefill: ASSISTANT_PREFILL_TAG,
+            assistantPrefill: prefillAUsar,
           }
         );
 
@@ -1455,6 +1483,19 @@ ${textToSummarize}`;
             >
               <Brain className="h-3.5 w-3.5 text-[#8BA888]" />
               <span className="hidden sm:inline">Memoria</span>
+            </button>
+
+            {/* Botón ¿Cómo vamos? */}
+            <button
+              type="button"
+              onClick={() => {
+                setInputText("¿Cómo vamos con los objetivos semanales y mensuales, los horarios de mis reportes y qué métodos me están funcionando?");
+              }}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold text-[#2D332D] bg-[#8BA888]/15 hover:bg-[#8BA888]/25 border border-[#8BA888]/30 rounded-xl transition cursor-pointer shadow-2xs"
+              title="Auditoría en vivo de objetivos y horarios"
+            >
+              <Target className="h-3.5 w-3.5 text-[#6D856B]" />
+              <span>¿Cómo vamos?</span>
             </button>
 
             {/* Analizar Contexto Button */}

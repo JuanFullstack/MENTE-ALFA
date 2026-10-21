@@ -18,7 +18,14 @@ import {
   parseRepairedTacticalOutput,
   consultarArbolPorRamaYNodo,
   obtenerHechoDosificadoSinRepetir,
+  evaluarModoInteraccion,
+  ModoInteraccionIA,
 } from "./src/lib/baseContext";
+import {
+  clasificarFranjaHoraria,
+  generarAuditoriaComoVamos,
+  formatearAuditoriaParaPrompt,
+} from "./src/lib/progressAuditor";
 import { consolidarNodosPatronesPorPunteros, construirArbolDesdeDatos } from "./src/lib/storage";
 import { FichaVivenciaInmutable, RamaTematica, Conversation } from "./src/types";
 
@@ -437,12 +444,17 @@ Responde únicamente con el objeto JSON válido.`;
     const {
       messages,
       memories,
+      logs,
       strategies,
       conversations,
       previousSummaries,
       baseContext,
       currentState,
       decisions,
+      objetivosEstructurados,
+      horaActualTexto,
+      modoInteraccion,
+      auditoriaComoVamosTexto,
     } = req.body;
 
     const companionName = baseContext?.companionName || "Aura IA";
@@ -497,13 +509,33 @@ Responde únicamente con el objeto JSON válido.`;
       ultimoMensajeUsuario
     );
 
-    // FASE 3: Prompt de Inferencia Final Reparado con Bloqueo Contrastivo (<analisis_contextual> + <consejo_tactico>)
+    // TELEMETRÍA HORARIA Y MODO OPERATIVO DE INTERACCIÓN
+    const infoHora = clasificarFranjaHoraria();
+    const horaActualTextoFinal = horaActualTexto || `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
+    const modoInteraccionFinal: ModoInteraccionIA =
+      modoInteraccion || evaluarModoInteraccion(ultimoMensajeUsuario, messages || []).modo;
+
+    let auditoriaTextoFinal = auditoriaComoVamosTexto;
+    if (!auditoriaTextoFinal && (objetivosEstructurados || logs)) {
+      const audObj = generarAuditoriaComoVamos(
+        logs || [],
+        objetivosEstructurados || [],
+        memories || [],
+        strategies || []
+      );
+      auditoriaTextoFinal = formatearAuditoriaParaPrompt(audObj);
+    }
+
+    // FASE 3: Prompt de Inferencia Final Reparado con 3 Modos y Telemetría
     const systemInstruction = buildRepairedSystemPrompt({
       ramaActiva,
       tagsDetectados,
       hiloRecienteTexto,
       fichasCompactasTexto,
       hechoDosificadoTexto,
+      horaActualTexto: horaActualTextoFinal,
+      modoInteraccion: modoInteraccionFinal,
+      auditoriaComoVamosTexto: auditoriaTextoFinal,
     });
 
     const geminiKey = getGeminiKey(req);
@@ -542,7 +574,7 @@ Responde únicamente con el objeto JSON válido.`;
           tacticalAnalysis,
           detectedState: {
             tags: [ramaActiva.toUpperCase(), ...tagsDetectados],
-            description: `Rama: ${ramaActiva} | Fichas activadas: ${fichasPodadas.map((f) => f.id).join(", ")}`,
+            description: `Rama: ${ramaActiva} | Modo: ${modoInteraccionFinal} | Fichas: ${fichasPodadas.map((f) => f.id).join(", ")}`,
           },
           energyLevel: 7,
         });
@@ -551,7 +583,7 @@ Responde únicamente con el objeto JSON válido.`;
       }
     }
 
-    // 2. Groq Cloud AI con Prefill Obligatorio del Asistente y Temperatura 0.25
+    // 2. Groq Cloud AI con Prefill Adaptado según Modo
     if (groqKey) {
       try {
         const recentMessages = (messages || []).slice(-5);
@@ -563,13 +595,18 @@ Responde únicamente con el objeto JSON válido.`;
           })),
         ];
 
+        const prefillAUsar =
+          modoInteraccionFinal === "sondeo_contexto_vago"
+            ? "<analisis_contextual>\n- Modo y especificidad: [sondeo_contexto_vago]"
+            : ASSISTANT_PREFILL_TAG;
+
         const content = await callGroqChat(groqMessages, {
           apiKey: groqKey,
           model: getGroqModel(req),
           jsonMode: false,
           temperature: 0.25,
           max_tokens: 900,
-          assistantPrefill: ASSISTANT_PREFILL_TAG,
+          assistantPrefill: prefillAUsar,
         });
 
         const { formattedMessage, tacticalAnalysis } = parseRepairedTacticalOutput(

@@ -20,9 +20,11 @@ import {
   NodoMecanismoArbol,
   RamaArbolMemoria,
   ArbolMemoriaJerarquico,
-  ModuloNarrativoPersuasivo
+  ModuloNarrativoPersuasivo,
+  ObjetivoEstructurado,
 } from "../types";
 import { RAW_BASE_CONTEXT, asegurarFichaInmutable, GUIAS_BASE_POR_RAMA, detectarRamaYTags, MODULOS_NARRATIVOS_REUTILIZABLES } from "./baseContext";
+import { PLANTILLAS_RASGOS_OFICIALES } from "./progressAuditor";
 
 // Keys for local storage
 const KEYS = {
@@ -40,6 +42,7 @@ const KEYS = {
   ACTIVE_CONVERSATION_ID: "zen_ai_active_conv_id",
   ARBOL_MEMORIA: "zen_ai_arbol_memoria_v2",
   MODULOS_NARRATIVOS: "zen_ai_modulos_narrativos_v1",
+  STRUCTURED_GOALS: "zen_ai_structured_goals_v1",
 };
 
 export interface UserProfile {
@@ -778,6 +781,131 @@ export function setLocalStorage<T>(key: string, value: T): void {
   }
 }
 
+export const INITIAL_OBJETIVOS_ESTRUCTURADOS: ObjetivoEstructurado[] = [
+  {
+    id: "OBJ-PROD-645",
+    titulo: PLANTILLAS_RASGOS_OFICIALES["PROD-1_arranque_645"].titulo,
+    tipo: "productivo",
+    periodo: "semanal",
+    periodoClave: "Semana Actual",
+    rasgoCodigo: "PROD-1_arranque_645",
+    rama_id: "habitos",
+    tags_mecanismo: ["#arranque_645", "#inercia_sueno"],
+    franjaCritica: "06:45_arranque",
+    meta: { objetivoNumerico: 6, progresoActual: 4, unidad: "dias" },
+    protocoloPasos: PLANTILLAS_RASGOS_OFICIALES["PROD-1_arranque_645"].protocoloPasos,
+    decretoClave: PLANTILLAS_RASGOS_OFICIALES["PROD-1_arranque_645"].decretoClave,
+    obstaculosRegistrados: [],
+    exitosRegistrados: [
+      {
+        fecha: new Date(Date.now() - 86400000).toISOString().split("T")[0],
+        hora: "06:46",
+        detonanteNegativo: "Pesadez al sonar la alarma",
+        metodoAplicado: "Levantarse antes de contar hasta 3 + Agua fría + Audio Horus 10m",
+      },
+    ],
+    estado: "cumpliendo",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "OBJ-PROD-730",
+    titulo: PLANTILLAS_RASGOS_OFICIALES["PROD-2_entreno_730"].titulo,
+    tipo: "productivo",
+    periodo: "semanal",
+    periodoClave: "Semana Actual",
+    rasgoCodigo: "PROD-2_entreno_730",
+    rama_id: "habitos",
+    tags_mecanismo: ["#entreno_poder", "#autoimagen_fisica"],
+    franjaCritica: "07:30_entreno",
+    meta: { objetivoNumerico: 6, progresoActual: 4, unidad: "dias" },
+    protocoloPasos: PLANTILLAS_RASGOS_OFICIALES["PROD-2_entreno_730"].protocoloPasos,
+    decretoClave: PLANTILLAS_RASGOS_OFICIALES["PROD-2_entreno_730"].decretoClave,
+    obstaculosRegistrados: [],
+    exitosRegistrados: [],
+    estado: "cumpliendo",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "OBJ-PROD-1700",
+    titulo: PLANTILLAS_RASGOS_OFICIALES["PROD-3_estudio_ingenieria"].titulo,
+    tipo: "productivo",
+    periodo: "semanal",
+    periodoClave: "Semana Actual",
+    rasgoCodigo: "PROD-3_estudio_ingenieria",
+    rama_id: "proyectos",
+    tags_mecanismo: ["#estudio_ingenieria", "#tolerancia_confusion", "#sobreestimulacion_digital"],
+    franjaCritica: "17:00_estudio_ingenieria",
+    meta: { objetivoNumerico: 6, progresoActual: 3, unidad: "bloques" },
+    protocoloPasos: PLANTILLAS_RASGOS_OFICIALES["PROD-3_estudio_ingenieria"].protocoloPasos,
+    decretoClave: PLANTILLAS_RASGOS_OFICIALES["PROD-3_estudio_ingenieria"].decretoClave,
+    obstaculosRegistrados: [
+      {
+        fecha: new Date(Date.now() - 2 * 86400000).toISOString().split("T")[0],
+        hora: "17:20",
+        detonante: "Tentación de abrir partida de LOL tras ver aviso de examen en Discord",
+      },
+    ],
+    exitosRegistrados: [
+      {
+        fecha: new Date(Date.now() - 86400000).toISOString().split("T")[0],
+        hora: "17:05",
+        detonanteNegativo: "Confusión inicial ante tema nuevo de ingeniería",
+        metodoAplicado: "Celular en No Molestar + Temporizador 15m aceptando confusión + Video YouTube panorama general",
+      },
+    ],
+    estado: "cumpliendo",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "OBJ-PSI-CONFIANZA",
+    titulo: PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].titulo,
+    tipo: "crecimiento_psicologico",
+    periodo: "mensual",
+    periodoClave: "Mes Actual",
+    rasgoCodigo: "PSI-1_autoconfianza",
+    rama_id: "vinculos",
+    tags_mecanismo: ["#valor_intrinseco", "#busqueda_aprobacion", "#alma_libre"],
+    franjaCritica: "23:00_cierre_o_social",
+    meta: { objetivoNumerico: 12, progresoActual: 8, unidad: "episodios_exitosos" },
+    protocoloPasos: PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].protocoloPasos,
+    decretoClave: PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].decretoClave,
+    obstaculosRegistrados: [],
+    exitosRegistrados: [],
+    estado: "cumpliendo",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: "OBJ-PSI-LEON",
+    titulo: PLANTILLAS_RASGOS_OFICIALES["PSI-5_ideal_adaptado_leon"].titulo,
+    tipo: "crecimiento_psicologico",
+    periodo: "semanal",
+    periodoClave: "Semana Actual",
+    rasgoCodigo: "PSI-5_ideal_adaptado_leon",
+    rama_id: "habitos",
+    tags_mecanismo: ["#ideal_adaptado", "#control_ira_leon"],
+    franjaCritica: "13:00_transicion_siesta",
+    meta: { objetivoNumerico: 5, progresoActual: 4, unidad: "episodios_exitosos" },
+    protocoloPasos: PLANTILLAS_RASGOS_OFICIALES["PSI-5_ideal_adaptado_leon"].protocoloPasos,
+    decretoClave: PLANTILLAS_RASGOS_OFICIALES["PSI-5_ideal_adaptado_leon"].decretoClave,
+    obstaculosRegistrados: [],
+    exitosRegistrados: [
+      {
+        fecha: new Date(Date.now() - 3 * 86400000).toISOString().split("T")[0],
+        hora: "20:15",
+        detonanteNegativo: "Ropa planificada sucia minutos antes de salir a reunión",
+        metodoAplicado: "Pausar frustración + Ideal Adaptado eligiendo mejor combinación limpia disponible con total compostura",
+      },
+    ],
+    estado: "cumpliendo",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
+
 export const ZenDB = {
   getUserProfile(): UserProfile {
     const profile = getLocalStorage<UserProfile>(KEYS.USER_PROFILE, DEFAULT_PROFILE);
@@ -917,6 +1045,13 @@ export const ZenDB = {
     setLocalStorage(KEYS.MODULOS_NARRATIVOS, modulos);
   },
 
+  getObjetivosEstructurados(): ObjetivoEstructurado[] {
+    return getLocalStorage<ObjetivoEstructurado[]>(KEYS.STRUCTURED_GOALS, INITIAL_OBJETIVOS_ESTRUCTURADOS);
+  },
+  setObjetivosEstructurados(objetivos: ObjetivoEstructurado[]): void {
+    setLocalStorage(KEYS.STRUCTURED_GOALS, objetivos);
+  },
+
   clearAll(): void {
     localStorage.removeItem(KEYS.USER_PROFILE);
     localStorage.removeItem(KEYS.CONVERSATIONS);
@@ -932,6 +1067,7 @@ export const ZenDB = {
     localStorage.removeItem(KEYS.ACTIVE_CONVERSATION_ID);
     localStorage.removeItem(KEYS.ARBOL_MEMORIA);
     localStorage.removeItem(KEYS.MODULOS_NARRATIVOS);
+    localStorage.removeItem(KEYS.STRUCTURED_GOALS);
   }
 };
 
