@@ -225,7 +225,7 @@ export default function RegistrosView({
     setReportError(null);
 
     const todayIso = new Date().toISOString().split("T")[0];
-    const todayMsgs = messages.filter((m) => m.timestamp.startsWith(todayIso));
+    const todayMsgs = messages.filter((m) => (m.createdAt || (m as any).timestamp || "").startsWith(todayIso));
     const todayLogs = logs.filter((l) => l.createdAt.startsWith(todayIso));
 
     if (todayMsgs.length === 0 && todayLogs.length === 0) {

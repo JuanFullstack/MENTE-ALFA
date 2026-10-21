@@ -204,6 +204,19 @@ export interface Message {
   } | null;
   energyLevel?: number | null;
   tacticalAnalysis?: TacticalAnalysisBlock | null;
+  desgloseReporte?: {
+    horaRegistrada: string;
+    franjaLabel: string;
+    energia: number;
+    foco: number;
+    estresPresion: number;
+    friccionDetectada: string;
+    metodoAplicado: string;
+    resultadoMetodo: string;
+    metasEspecificas: string[];
+    compromisoHorario?: string;
+    ventanaDisponibleTexto: string;
+  } | null;
   suggestions?: {
     decision?: DecisionSuggestion | null;
     strategy?: StrategySuggestion | null;

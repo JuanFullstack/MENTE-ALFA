@@ -122,7 +122,7 @@ function getGroqKey(req?: express.Request): string | null {
 function getGroqModel(req?: express.Request): string {
   const headerModel = req?.headers["x-groq-model"];
   if (typeof headerModel === "string" && headerModel.trim()) return headerModel.trim();
-  return "llama-3.3-70b-versatile";
+  return "qwen/qwen3.8-27b";
 }
 
 function cleanThinkTags(text: string): string {
@@ -173,9 +173,8 @@ async function callGroqChat(
   const requested = options.model;
   const modelsToTry = [
     requested,
-    "llama-3.3-70b-versatile",
-    "qwen/qwen3.6-27b",
-    "llama-3.1-8b-instant",
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
   ]
     .filter((m): m is string => Boolean(m))
     .filter((m, i, arr) => arr.indexOf(m) === i);
@@ -273,7 +272,7 @@ app.post("/api/groq/test", async (req, res) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "llama-3.1-8b-instant",
+        model: "qwen/qwen3.8-27b",
         messages: [{ role: "user", content: "ping" }],
         max_tokens: 5,
         temperature: 0.1,
@@ -388,7 +387,7 @@ Responde únicamente con el objeto JSON válido.`;
           ],
           {
             apiKey: groqKey,
-            model: "llama-3.1-8b-instant",
+            model: "qwen/qwen3.8-27b",
             jsonMode: true,
             temperature: 0.1,
             max_tokens: 320,
@@ -455,6 +454,7 @@ Responde únicamente con el objeto JSON válido.`;
       horaActualTexto,
       modoInteraccion,
       auditoriaComoVamosTexto,
+      desgloseReporteTexto,
     } = req.body;
 
     const companionName = baseContext?.companionName || "Aura IA";
@@ -526,7 +526,7 @@ Responde únicamente con el objeto JSON válido.`;
       auditoriaTextoFinal = formatearAuditoriaParaPrompt(audObj);
     }
 
-    // FASE 3: Prompt de Inferencia Final Reparado con 3 Modos y Telemetría
+    // FASE 3: Prompt de Inferencia Final Reparado con 4 Modos y Telemetría
     const systemInstruction = buildRepairedSystemPrompt({
       ramaActiva,
       tagsDetectados,
@@ -536,6 +536,7 @@ Responde únicamente con el objeto JSON válido.`;
       horaActualTexto: horaActualTextoFinal,
       modoInteraccion: modoInteraccionFinal,
       auditoriaComoVamosTexto: auditoriaTextoFinal,
+      desgloseReporteTexto,
     });
 
     const geminiKey = getGeminiKey(req);
@@ -1011,4 +1012,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (process.env.VERCEL !== "1") {
+  startServer();
+}
+
+export default app;

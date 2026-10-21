@@ -29,10 +29,10 @@ export const GROQ_MODELS = [
   },
 ];
 
-export const PRIMARY_GROQ_MODEL = "llama-3.3-70b-versatile";
-export const EXTRACTION_GROQ_MODEL = "llama-3.1-8b-instant";
-export const FALLBACK_GROQ_MODEL = "llama-3.1-8b-instant";
-export const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
+export const PRIMARY_GROQ_MODEL = "qwen/qwen3.8-27b";
+export const EXTRACTION_GROQ_MODEL = "qwen/qwen3.8-27b";
+export const FALLBACK_GROQ_MODEL = "openai/gpt-oss-120b";
+export const DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b";
 const DEFAULT_GROQ_API_KEY = "";
 
 export const DEFAULT_GEMINI_API_KEY = "";

@@ -303,7 +303,7 @@ export default function App() {
       const { horaExacta, dateKey } = clasificarFranjaHoraria(newLog.createdAt);
       const nuevaMemoria: Memory = {
         id: `mem-viv-${Date.now()}`,
-        content: `[Éxito ante obstáculo en ${horaExacta} hs] Detonante: ${newLog.detonante || "Fricción"}. Método que funcionó: ${newLog.metodoAplicado || newLog.note}`,
+        text: `[Éxito ante obstáculo en ${horaExacta} hs] Detonante: ${newLog.detonante || "Fricción"}. Método que funcionó: ${newLog.metodoAplicado || newLog.note}`,
         category: newLog.tipoReporte === "productivo" ? "proyectos" : "vinculos",
         isApproved: true,
         createdAt: new Date().toISOString(),
@@ -378,6 +378,8 @@ export default function App() {
             onSetActiveConvId={handleSetActiveConvId}
             onOpenQuickLog={() => setIsQuickLogOpen(true)}
             onOpenAddMemory={() => setIsAddMemoryOpen(true)}
+            onSaveQuickLog={handleSaveQuickLog}
+            onUpdateObjetivos={handleUpdateObjetivos}
           />
         )}
 

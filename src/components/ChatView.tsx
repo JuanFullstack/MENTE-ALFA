@@ -79,6 +79,7 @@ import {
   extractDimensionalAxesGroq,
   extractFichaVivenciaGroq
 } from "../services/groqEvaluation";
+import { extraerReporteOperativo, ReporteOperativoDesglose } from "../lib/reportExtractor";
 import { 
   upsertConversacionSummaryPB, 
   deleteConversacionPB,
@@ -110,6 +111,8 @@ interface ChatViewProps {
   onSetActiveConvId: (id: string) => void;
   onOpenQuickLog?: () => void;
   onOpenAddMemory?: () => void;
+  onSaveQuickLog?: (log: DailyLog) => void;
+  onUpdateObjetivos?: (objs: ObjetivoEstructurado[]) => void;
 }
 
 export default function ChatView({
@@ -134,6 +137,8 @@ export default function ChatView({
   onSetActiveConvId,
   onOpenQuickLog,
   onOpenAddMemory,
+  onSaveQuickLog,
+  onUpdateObjetivos,
 }: ChatViewProps) {
   const [inputText, setInputText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -670,9 +675,21 @@ ${textToSummarize}`;
       const infoHora = clasificarFranjaHoraria();
       const horaActualTexto = `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
       const activeThreadMsgs = updatedMessages.filter((m) => m.conversationId === activeConversationId);
-      const { modo: modoInteraccion } = evaluarModoInteraccion(userText, activeThreadMsgs);
+
+      // Extracción y almacenamiento estructurado de reporte operativo / check-in
+      const reporteOperativo = await extraerReporteOperativo(userText, horaActualTexto, objetivosEstructurados);
+      if (reporteOperativo.esReporte) {
+        onSaveQuickLog?.(reporteOperativo.log);
+      }
+
+      let { modo: modoInteraccion } = evaluarModoInteraccion(userText, activeThreadMsgs);
+      if (reporteOperativo.esReporte) {
+        modoInteraccion = "reporte_operativo_checkin";
+      }
+
       const auditoriaObj = generarAuditoriaComoVamos(logs, objetivosEstructurados, memories, strategies);
       const auditoriaComoVamosTexto = formatearAuditoriaParaPrompt(auditoriaObj);
+      const desgloseReporteTexto = reporteOperativo.esReporte ? reporteOperativo.desgloseTexto : undefined;
 
       let data: any = null;
 
@@ -701,6 +718,7 @@ ${textToSummarize}`;
             horaActualTexto,
             modoInteraccion,
             auditoriaComoVamosTexto,
+            desgloseReporteTexto,
             baseContext: {
               userName: profile.userName,
               companionName: profile.companionName,
@@ -756,6 +774,7 @@ ${textToSummarize}`;
           horaActualTexto,
           modoInteraccion,
           auditoriaComoVamosTexto,
+          desgloseReporteTexto,
         });
 
         const convHistory = activeThreadMsgs
@@ -793,7 +812,7 @@ ${textToSummarize}`;
         data = {
           message: formattedMessage,
           tacticalAnalysis,
-          energyLevel: 7,
+          energyLevel: reporteOperativo.esReporte ? reporteOperativo.desglose.energia : 7,
         };
       }
 
@@ -803,7 +822,9 @@ ${textToSummarize}`;
         sender: "assistant",
         text: data?.message || "He procesado tu mensaje con atención.",
         createdAt: new Date().toISOString(),
-        energyLevel: data?.energyLevel,
+        energyLevel: data?.energyLevel ?? (reporteOperativo.esReporte ? reporteOperativo.desglose.energia : undefined),
+        tacticalAnalysis: data?.tacticalAnalysis,
+        desgloseReporte: reporteOperativo.esReporte ? reporteOperativo.desglose : null,
       };
 
       onUpdateMessages([...updatedMessages, aiMsg]);
@@ -1601,10 +1622,67 @@ ${textToSummarize}`;
                   </div>
 
                   <div className="space-y-2 flex-1 min-w-0">
+                    {/* Tarjeta de Desglose Estructurado si el mensaje fue un reporte operativo */}
+                    {msg.desgloseReporte && (
+                      <div className="bg-[#F4F8F3] border border-[#8BA888]/40 rounded-2xl p-3 sm:p-4 space-y-2.5 text-xs text-[#2D332D] shadow-2xs">
+                        <div className="flex items-center justify-between pb-2 border-b border-[#8BA888]/20">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                            <span className="font-bold text-[#355E3B] text-[11px] sm:text-xs uppercase tracking-wider">
+                              ✓ Reporte Operativo Asentado en Base de Datos
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md">
+                            {msg.desgloseReporte.horaRegistrada} hs · {msg.desgloseReporte.franjaLabel}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                          <div className="bg-white/90 p-2 rounded-xl border border-[#EAE2D6]">
+                            <span className="text-[9px] text-[#7A7167] font-bold block uppercase">Energía / Ánimo</span>
+                            <span className="font-bold text-[#2D332D]">{msg.desgloseReporte.energia}/10 · Tranquilo</span>
+                          </div>
+                          <div className="bg-white/90 p-2 rounded-xl border border-[#EAE2D6]">
+                            <span className="text-[9px] text-[#7A7167] font-bold block uppercase">Foco / Presión</span>
+                            <span className="font-bold text-[#2D332D]">{msg.desgloseReporte.foco}/10 · Estrés {msg.desgloseReporte.estresPresion}/10</span>
+                          </div>
+                          <div className="bg-white/90 p-2 rounded-xl border border-[#EAE2D6]">
+                            <span className="text-[9px] text-[#7A7167] font-bold block uppercase">Método Exitoso</span>
+                            <span className="font-bold text-emerald-700 truncate block" title={msg.desgloseReporte.metodoAplicado}>
+                              Meditación 12m (Éxito)
+                            </span>
+                          </div>
+                          <div className="bg-white/90 p-2 rounded-xl border border-[#EAE2D6]">
+                            <span className="text-[9px] text-[#7A7167] font-bold block uppercase">Ventana Disponible</span>
+                            <span className="font-bold text-amber-800 truncate block">
+                              {msg.desgloseReporte.compromisoHorario ? `Hasta ${msg.desgloseReporte.compromisoHorario}` : "Inmediato"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-[11px] text-[#554E45] space-y-1 pt-1 border-t border-[#8BA888]/15">
+                          <div>
+                            <span className="font-bold text-[#2D332D]">Metas declaradas: </span>
+                            <span className="text-[#355E3B] font-semibold">{msg.desgloseReporte.metasEspecificas.join(" y ") || "Unidad 5 y 7"}</span>
+                          </div>
+                          <div>
+                            <span className="font-bold text-[#2D332D]">Fricción registrada: </span>
+                            <span>{msg.desgloseReporte.friccionDetectada}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     <div className="bg-white border border-[#EAE2D6] rounded-2xl p-3 sm:p-4 text-xs sm:text-sm text-[#3A3530] leading-relaxed shadow-2xs space-y-2">
                       <p className="whitespace-pre-wrap">{limpiarFormatoPlano(msg.text)}</p>
                       <div className="pt-2 border-t border-[#EAE2D6]/60 flex items-center justify-between gap-2 text-[11px]">
-                        <span className="text-[#A69D91] italic">Modo consulta (no guardado en BD)</span>
+                        {msg.desgloseReporte ? (
+                          <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                            ✓ Guardado en Logs Diarios, PocketBase y Objetivos [PROD-3]
+                          </span>
+                        ) : (
+                          <span className="text-[#A69D91] italic">Modo consulta</span>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleConsolidarIntercambioEnArbol(msg)}

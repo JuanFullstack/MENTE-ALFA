@@ -700,7 +700,7 @@ COMO DETECTAR CUANDO LA MENTE O LOS INSTINTOS PRIMITIVOS ENGANAN A JUAN SIN QUE 
      * En lo social: no esperar reacciones ni resultados; acercarte con una pregunta simple y casual solo por practicar y divertirte, siendo un alma libre a la que le da igual si sale bien o mal.
 `;
 
-export type ModoInteraccionIA = 'sondeo_contexto_vago' | 'auditoria_como_vamos' | 'consejo_tactico_directo';
+export type ModoInteraccionIA = 'sondeo_contexto_vago' | 'auditoria_como_vamos' | 'reporte_operativo_checkin' | 'consejo_tactico_directo';
 
 export function evaluarModoInteraccion(
   textoUsuario: string,
@@ -717,6 +717,16 @@ export function evaluarModoInteraccion(
     return {
       modo: "auditoria_como_vamos",
       motivo: "El usuario solicitó auditoría de cumplimiento de objetivos, horarios de reporte, fallos y valoración de métodos exitosos.",
+    };
+  }
+
+  // Detección de reporte operativo / check-in de jornada
+  const tieneIndiciosHorarios = /(?:son las|a las|tipo \d+|mediod[ií]a|durante la mañana|en la tarde|\d{1,2}:\d{2}|\d{1,2} y \d{2})\b/i.test(txt);
+  const tieneIndiciosEstadoOAccion = /(?:mi estado|energ[ií]a|desganado|desgano|tranquilo|positivo|presionado|presi[oó]n|foco|productiv|meditaci[oó]n|avanzar|estudiar|unidad|compromiso|promet[ií]|fogaje|cosas intermedia)/i.test(txt);
+  if (tieneIndiciosHorarios && tieneIndiciosEstadoOAccion) {
+    return {
+      modo: "reporte_operativo_checkin",
+      motivo: "El usuario envió un reporte operativo / check-in detallado con horas, estado bioemocional, métodos aplicados o metas de estudio.",
     };
   }
 
@@ -743,7 +753,7 @@ export function evaluarModoInteraccion(
 
 /**
  * FASE 3: PROMPT DE INFERENCIA FINAL REPARADO
- * Integra la poda de ramas, la memoria del hilo activo, el detector de autoengaño y los 3 modos operativos.
+ * Integra la poda de ramas, la memoria del hilo activo, el detector de autoengaño y los 4 modos operativos.
  */
 export function buildRepairedSystemPrompt(params: {
   ramaActiva: RamaTematica;
@@ -754,6 +764,7 @@ export function buildRepairedSystemPrompt(params: {
   horaActualTexto?: string;
   modoInteraccion?: ModoInteraccionIA;
   auditoriaComoVamosTexto?: string;
+  desgloseReporteTexto?: string;
 }): string {
   const modo = params.modoInteraccion || "consejo_tactico_directo";
   const horaInfo = params.horaActualTexto || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -777,6 +788,25 @@ Basate ESTRICTAMENTE en los datos de <auditoria_objetivos_y_horarios> y respond�
 3) EN QUÉ ESTÁ FALLANDO Y PATRONES REPETIDOS: Señalá los obstáculos concretos donde tropezó esta semana.
 4) RETROALIMENTACIÓN CON EXPERIENCIAS NEGATIVAS DONDE TUVO ÉXITO (VALORACIÓN DEL MÉTODO): Citá las experiencias negativas psicológicas o productivas registradas en <auditoria_objetivos_y_horarios> y <experiencias_del_arbol> donde Juan estuvo en esa misma situación difícil pero TUVO ÉXITO, valorando explícitamente el método que aplicó esa vez (ej. levantarse antes de contar hasta 3 con agua fría y audio Horus, tolerar los primeros 15 min de confusión en estudio, respiración del león en lo de Renán, Ideal Adaptado con la ropa sucia o postura erguida en el boliche).
 5) ACCIÓN INMEDIATA PARA HOY (${horaInfo}): Dale una única consigna concreta para ganar la franja horaria actual.`
+      : modo === "reporte_operativo_checkin"
+      ? `MODO ACTIVO EN ESTE TURNO: [4. RECEPCIÓN Y DESGLOSE DE REPORTE OPERATIVO / CHECK-IN]
+Juan acaba de enviar un reporte de avance y estado de su jornada (${horaInfo}).
+DATOS YA REGISTRADOS EN EL SISTEMA:
+${params.desgloseReporteTexto || "Métricas, método exitoso y metas de estudio asentadas en ZenDB y PocketBase."}
+
+INSTRUCCIONES CLAVE DE RESPUESTA:
+1) CONFIRMAR EL DESGLOSE DE LO GUARDADO:
+   Iniciá confirmando claramente qué datos quedaron asentados en su registro: horario exacto, métricas de energía/ánimo, el método aplicado registrado como ÉXITO ante la fricción, y las metas declaradas para hoy.
+2) VALORAR EL MÉTODO QUE FUNCIONÓ:
+   Valorá con frialdad de ingeniero que a las 10:30 hs haya ejecutado la meditación de 12 min para revertir el desgano y recuperar la calma. Destacá que ese es exactamente el protocolo a consolidar: ante el bajón, corte mecánico con meditación/NSDR en vez de evadirse.
+3) FRENAR EL DESVÍO EN TAREAS SECUNDARIAS ("FOGAJE"):
+   Marcale sin anestesia que ponerse a 'mejorar la app' o hacer tareas intermedias cuando el objetivo principal era estudiar es la trampa clásica de la procrastinación productiva ("fogaje").
+4) PLAN TÁCTICO POR BLOQUES (TIME-BOXING) PARA SUS METAS REALES:
+   NO le digas que no busque terminar la Unidad 5 y 7 ni desprecies sus objetivos. Al contrario: armale un plan táctico con el reloj en mano para los minutos exactos que le quedan antes de su compromiso de las 15:00 hs para que liquide o avance masivamente en la Unidad 5 y barra la Unidad 7:
+   • Bloque 1 (primeros 75 min): Ataque a Unidad 5 (conceptos clave y ejercicios prácticos troncales).
+   • Pausa Táctica de 5 min: Agua fría, respiración de león, postura erguida.
+   • Bloque 2 (siguientes 60 min): Barrido de Unidad 7 (estructura general, definiciones y preguntas de examen).
+   • Cierre 14:50 a 15:00 hs: Corte limpio para salir al compromiso con la conciencia impecable.`
       : `MODO ACTIVO EN ESTE TURNO: [2. CONSEJO TÁCTICO DIRECTO CON GUÍA PRÁCTICA]
 1) DESENMASCARAR EL AUTOENGAÑO: Mostrale cómo su mente o el demonio interno lo quiere engañar (el "permitido corto" de LOL/videos/memes, "mañana empiezo", buscar aprobación externa en el boliche o encapricharse cuando un escenario es imperfecto).
 2) APLICAR EL PROTOCOLO EXACTO DE SU GUÍA SEGÚN EL CASO:
