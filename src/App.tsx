@@ -56,6 +56,8 @@ export default function App() {
   // Modals state
   const [isQuickLogOpen, setIsQuickLogOpen] = useState(false);
   const [isAddMemoryOpen, setIsAddMemoryOpen] = useState(false);
+  const [autoRequestReportTrigger, setAutoRequestReportTrigger] = useState(0);
+  const [autoLoadDataTrigger, setAutoLoadDataTrigger] = useState(0);
 
   // Core application 5-layer database states
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -289,7 +291,7 @@ export default function App() {
     ZenDB.setObjetivosEstructurados(newObjs);
   };
 
-  const handleSaveQuickLog = (newLog: DailyLog) => {
+  const handleSaveQuickLog = (newLog: DailyLog, requestReportAfter?: boolean) => {
     const updated = [newLog, ...logs];
     handleUpdateLogs(updated);
     createRegistroPB(newLog);
@@ -327,6 +329,21 @@ export default function App() {
       };
       handleSaveQuickMemory(nuevaMemoria);
     }
+
+    // Si el usuario guardó desde el modal y pidió Reporte + Consejos a continuación
+    if (requestReportAfter) {
+      setActiveTab("conversar");
+      setTimeout(() => {
+        setAutoRequestReportTrigger((prev) => prev + 1);
+      }, 150);
+    }
+  };
+
+  const handleRequestReportFromNavbar = () => {
+    setActiveTab("conversar");
+    setTimeout(() => {
+      setAutoRequestReportTrigger((prev) => prev + 1);
+    }, 100);
   };
 
   const handleSaveQuickMemory = (newMem: Memory) => {
@@ -342,14 +359,21 @@ export default function App() {
 
   // Render Dashboard Views
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#FDFBF7] text-[#2D332D]">
+    <div className="flex flex-col h-[100dvh] w-screen overflow-hidden bg-[#FDFBF7] text-[#2D332D]">
       
       {/* Top Main Navigation Bar */}
       <TopNavbar
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        onOpenQuickLog={() => setIsQuickLogOpen(true)}
+        onOpenQuickLog={() => {
+          if (activeTab === "conversar") {
+            setAutoLoadDataTrigger((prev) => prev + 1);
+          } else {
+            setIsQuickLogOpen(true);
+          }
+        }}
         onOpenAddMemory={() => setIsAddMemoryOpen(true)}
+        onRequestReport={handleRequestReportFromNavbar}
         profile={profile}
       />
 
@@ -380,6 +404,8 @@ export default function App() {
             onOpenAddMemory={() => setIsAddMemoryOpen(true)}
             onSaveQuickLog={handleSaveQuickLog}
             onUpdateObjetivos={handleUpdateObjetivos}
+            autoRequestReportTrigger={autoRequestReportTrigger}
+            autoLoadDataTrigger={autoLoadDataTrigger}
           />
         )}
 

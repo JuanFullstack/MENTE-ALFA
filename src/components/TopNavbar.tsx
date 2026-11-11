@@ -12,7 +12,9 @@ import {
   CalendarRange, 
   BarChart2, 
   Plus,
-  Compass
+  Compass,
+  Database,
+  BarChart3
 } from "lucide-react";
 import { UserProfile } from "../lib/storage";
 
@@ -23,6 +25,7 @@ interface TopNavbarProps {
   onTabChange: (tab: NavTab) => void;
   onOpenQuickLog: () => void;
   onOpenAddMemory: () => void;
+  onRequestReport?: () => void;
   profile: UserProfile;
 }
 
@@ -31,6 +34,7 @@ export default function TopNavbar({
   onTabChange,
   onOpenQuickLog,
   onOpenAddMemory,
+  onRequestReport,
   profile,
 }: TopNavbarProps) {
   const navTabs = [
@@ -83,27 +87,38 @@ export default function TopNavbar({
           })}
         </nav>
 
-        {/* Right Action Buttons */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        {/* Right Action Buttons: Optimizados para Mobile (Cargar Datos vs Pedir Reporte) */}
+        <div className="flex items-center gap-1.5 sm:gap-2.5">
           <button
             onClick={onOpenAddMemory}
-            className="border-2 border-dashed border-[#8BA888] hover:border-[#6D856B] bg-[#8BA888]/10 hover:bg-[#8BA888]/20 text-[#2D332D] text-[11px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 sm:py-2 rounded-full shadow-2xs hover:shadow transition flex items-center gap-1.5 cursor-pointer shrink-0"
+            className="hidden sm:flex border-2 border-dashed border-[#8BA888] hover:border-[#6D856B] bg-[#8BA888]/10 hover:bg-[#8BA888]/20 text-[#2D332D] text-[11px] sm:text-xs font-bold px-3 sm:px-3.5 py-1.5 rounded-full shadow-2xs transition items-center gap-1.5 cursor-pointer shrink-0"
             title="Agregar nueva nota mental a la memoria"
           >
             <Plus className="h-3.5 w-3.5 text-[#6D856B]" />
-            <span className="hidden sm:inline">Nota Mental</span>
-            <span className="sm:hidden text-[11px]">Nota</span>
+            <span>Nota Mental</span>
           </button>
 
           <button
             onClick={onOpenQuickLog}
-            className="bg-[#D98E73] hover:bg-[#C87E63] text-white text-[11px] sm:text-xs font-semibold px-3 sm:px-5 py-1.5 sm:py-2 rounded-full shadow-xs hover:shadow transition flex items-center gap-1 cursor-pointer shrink-0"
-            title="Registrar estado emocional"
+            className="bg-sky-700 hover:bg-sky-800 text-white text-[11px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 sm:py-2 rounded-full shadow-xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
+            title="Cargar información del momento del día (Datos Operativos + Aspecto Psicológico)"
           >
-            <Plus className="h-3.5 w-3.5 sm:hidden" />
-            <span className="hidden sm:inline">Registrar ahora</span>
-            <span className="sm:hidden text-[11px]">Registrar</span>
+            <Database className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Cargar Momento</span>
+            <span className="sm:hidden">Cargar</span>
           </button>
+
+          {onRequestReport && (
+            <button
+              onClick={onRequestReport}
+              className="bg-[#6D856B] hover:bg-[#5A7358] text-white text-[11px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 sm:py-2 rounded-full shadow-xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
+              title="Pedir Reporte con Consejos (Datos del día vs Aspecto Psicológico)"
+            >
+              <BarChart3 className="h-3.5 w-3.5 text-amber-200" />
+              <span className="hidden sm:inline">Pedir Reporte</span>
+              <span className="sm:hidden">Reporte</span>
+            </button>
+          )}
 
           <button
             onClick={() => onTabChange("configuracion")}

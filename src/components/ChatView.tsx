@@ -33,7 +33,9 @@ import {
   Layers,
   Zap,
   Flame,
-  Scale
+  Scale,
+  Database,
+  BarChart3
 } from "lucide-react";
 import { 
   Conversation, 
@@ -79,7 +81,11 @@ import {
   extractDimensionalAxesGroq,
   extractFichaVivenciaGroq
 } from "../services/groqEvaluation";
-import { extraerReporteOperativo, ReporteOperativoDesglose } from "../lib/reportExtractor";
+import {
+  extraerReporteOperativo,
+  ReporteOperativoDesglose,
+  compilarCargasDelDiaSeparadas,
+} from "../lib/reportExtractor";
 import { 
   upsertConversacionSummaryPB, 
   deleteConversacionPB,
@@ -113,6 +119,8 @@ interface ChatViewProps {
   onOpenAddMemory?: () => void;
   onSaveQuickLog?: (log: DailyLog) => void;
   onUpdateObjetivos?: (objs: ObjetivoEstructurado[]) => void;
+  autoRequestReportTrigger?: number;
+  autoLoadDataTrigger?: number;
 }
 
 export default function ChatView({
@@ -139,6 +147,8 @@ export default function ChatView({
   onOpenAddMemory,
   onSaveQuickLog,
   onUpdateObjetivos,
+  autoRequestReportTrigger = 0,
+  autoLoadDataTrigger = 0,
 }: ChatViewProps) {
   const [inputText, setInputText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -635,14 +645,23 @@ ${textToSummarize}`;
     }
   };
 
-  // 6. Enviar mensaje del usuario
-  const handleSendMessage = async (e?: React.FormEvent) => {
+  // 6. Enviar mensaje del usuario o ejecutar acción de Carga de Datos / Pedir Reporte con Consejos
+  const handleSendMessage = async (
+    e?: React.FormEvent,
+    overrideOpts?: {
+      customText?: string;
+      forcedMode?: ModoInteraccionIA;
+    }
+  ) => {
     if (e) e.preventDefault();
-    if (!inputText.trim() || isLoading) return;
+    const rawToProcess = overrideOpts?.customText !== undefined ? overrideOpts.customText : inputText;
+    if (!rawToProcess.trim() || isLoading) return;
 
     setErrorMsg(null);
-    const userText = inputText.trim();
-    setInputText("");
+    const userText = rawToProcess.trim();
+    if (overrideOpts?.customText === undefined) {
+      setInputText("");
+    }
 
     const userMsg: Message = {
       id: `m-${Date.now()}`,
@@ -676,20 +695,37 @@ ${textToSummarize}`;
       const horaActualTexto = `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
       const activeThreadMsgs = updatedMessages.filter((m) => m.conversationId === activeConversationId);
 
-      // Extracción y almacenamiento estructurado de reporte operativo / check-in
-      const reporteOperativo = await extraerReporteOperativo(userText, horaActualTexto, objetivosEstructurados);
-      if (reporteOperativo.esReporte) {
+      // Si presionó "Cargar Información", forzamos extracción separada (Datos Operativos vs Psicológico)
+      const forzarExtraccion = overrideOpts?.forcedMode === "carga_datos_momento";
+      const esSolicitudReporte = overrideOpts?.forcedMode === "reporte_con_consejos";
+
+      const reporteOperativo = await extraerReporteOperativo(
+        userText,
+        horaActualTexto,
+        objetivosEstructurados,
+        forzarExtraccion
+      );
+
+      let logsParaAuditoria = logs;
+      if (reporteOperativo.esReporte && !esSolicitudReporte) {
         onSaveQuickLog?.(reporteOperativo.log);
+        logsParaAuditoria = [reporteOperativo.log, ...logs];
       }
 
       let { modo: modoInteraccion } = evaluarModoInteraccion(userText, activeThreadMsgs);
-      if (reporteOperativo.esReporte) {
+      if (overrideOpts?.forcedMode) {
+        modoInteraccion = overrideOpts.forcedMode;
+      } else if (reporteOperativo.esReporte) {
         modoInteraccion = "reporte_operativo_checkin";
       }
 
-      const auditoriaObj = generarAuditoriaComoVamos(logs, objetivosEstructurados, memories, strategies);
-      const auditoriaComoVamosTexto = formatearAuditoriaParaPrompt(auditoriaObj);
-      const desgloseReporteTexto = reporteOperativo.esReporte ? reporteOperativo.desgloseTexto : undefined;
+      const auditoriaObj = generarAuditoriaComoVamos(logsParaAuditoria, objetivosEstructurados, memories, strategies);
+      const resumenCargasDia = compilarCargasDelDiaSeparadas(logsParaAuditoria);
+      const auditoriaComoVamosTexto = `${resumenCargasDia}\n\n${formatearAuditoriaParaPrompt(auditoriaObj)}`;
+      const desgloseReporteTexto =
+        reporteOperativo.esReporte && !esSolicitudReporte
+          ? reporteOperativo.desgloseTexto
+          : resumenCargasDia;
 
       let data: any = null;
 
@@ -824,7 +860,10 @@ ${textToSummarize}`;
         createdAt: new Date().toISOString(),
         energyLevel: data?.energyLevel ?? (reporteOperativo.esReporte ? reporteOperativo.desglose.energia : undefined),
         tacticalAnalysis: data?.tacticalAnalysis,
-        desgloseReporte: reporteOperativo.esReporte ? reporteOperativo.desglose : null,
+        desgloseReporte:
+          reporteOperativo.esReporte && !esSolicitudReporte
+            ? reporteOperativo.desglose
+            : null,
       };
 
       onUpdateMessages([...updatedMessages, aiMsg]);
@@ -845,6 +884,61 @@ ${textToSummarize}`;
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   };
+
+  // Botón 1: Cargar Información en diferentes momentos del día (Optimizado Mobile)
+  const handleBotonCargarInformacion = () => {
+    if (isLoading) return;
+    if (inputText.trim().length > 0) {
+      handleSendMessage(undefined, {
+        forcedMode: "carga_datos_momento",
+      });
+    } else {
+      onOpenQuickLog?.();
+    }
+  };
+
+  // Botón 2: Pedir Reporte con Consejos (basado en las cargas del día + psicología)
+  const handleBotonPedirReporteConConsejos = () => {
+    if (isLoading) return;
+    const textoUsuarioActual = inputText.trim();
+    if (textoUsuarioActual.length > 0) {
+      setInputText("");
+      handleSendMessage(undefined, {
+        customText: `${textoUsuarioActual}\n\n[Solicitud: Con esta nueva carga, dame el Reporte Integral separando mis Datos Operativos del Día vs mi Aspecto Psicológico, y el Consejo Táctico por bloques para ahora.]`,
+        forcedMode: "carga_datos_momento",
+      });
+      return;
+    }
+
+    handleSendMessage(undefined, {
+      customText:
+        "📊 Pedir Reporte con Consejos: Analizá por separado mis cargas de datos operativos de hoy (horarios, avances y pendientes) vs mi aspecto psicológico (estado, fricciones y métodos que me funcionaron), y dame el consejo táctico por bloques para esta franja.",
+      forcedMode: "reporte_con_consejos",
+    });
+  };
+
+  // Disparador automático cuando se pide Reporte + Consejos desde el botón superior
+  const lastTriggerRef = useRef<number>(autoRequestReportTrigger);
+  useEffect(() => {
+    if (autoRequestReportTrigger > 0 && autoRequestReportTrigger !== lastTriggerRef.current) {
+      lastTriggerRef.current = autoRequestReportTrigger;
+      handleBotonPedirReporteConConsejos();
+    }
+  }, [autoRequestReportTrigger]);
+
+  // Disparador automático cuando se toca "Cargar" desde el botón superior
+  const lastLoadTriggerRef = useRef<number>(autoLoadDataTrigger);
+  useEffect(() => {
+    if (autoLoadDataTrigger > 0 && autoLoadDataTrigger !== lastLoadTriggerRef.current) {
+      lastLoadTriggerRef.current = autoLoadDataTrigger;
+      handleBotonCargarInformacion();
+    }
+  }, [autoLoadDataTrigger]);
+
+  const hoyIso = new Date().toISOString().split("T")[0];
+  const cargasDeHoy = (logs || [])
+    .filter((l) => (l.dateKey || clasificarFranjaHoraria(l.createdAt).dateKey) === hoyIso)
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
   // Aceptar sugerencia de decisión de la IA
   const handleAcceptDecision = (decisionSug: DecisionSuggestion, msgId: string) => {
@@ -1493,7 +1587,7 @@ ${textToSummarize}`;
             </div>
           </div>
 
-          {/* Right Header Actions */}
+          {/* Right Header Actions (Sin repetir Cargar/Reporte que ya están arriba) */}
           <div className="flex items-center gap-1.5 shrink-0">
             {/* Mobile Drawer Trigger for Memory & Patterns */}
             <button
@@ -1506,25 +1600,12 @@ ${textToSummarize}`;
               <span className="hidden sm:inline">Memoria</span>
             </button>
 
-            {/* Botón ¿Cómo vamos? */}
-            <button
-              type="button"
-              onClick={() => {
-                setInputText("¿Cómo vamos con los objetivos semanales y mensuales, los horarios de mis reportes y qué métodos me están funcionando?");
-              }}
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold text-[#2D332D] bg-[#8BA888]/15 hover:bg-[#8BA888]/25 border border-[#8BA888]/30 rounded-xl transition cursor-pointer shadow-2xs"
-              title="Auditoría en vivo de objetivos y horarios"
-            >
-              <Target className="h-3.5 w-3.5 text-[#6D856B]" />
-              <span>¿Cómo vamos?</span>
-            </button>
-
             {/* Analizar Contexto Button */}
             <button
               type="button"
               onClick={handleAnalyzeContext}
               disabled={isAnalyzingContext}
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition cursor-pointer disabled:opacity-50 shadow-2xs"
+              className="hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition cursor-pointer disabled:opacity-50 shadow-2xs"
               title="Analiza la trayectoria evolutiva en las 8 dimensiones"
             >
               {isAnalyzingContext ? (
@@ -1532,7 +1613,7 @@ ${textToSummarize}`;
               ) : (
                 <Compass className="h-3.5 w-3.5 text-amber-700" />
               )}
-              <span className="hidden sm:inline">Analizar Contexto</span>
+              <span className="hidden md:inline">Contexto</span>
             </button>
 
             {/* Clear Window Button */}
@@ -1540,14 +1621,42 @@ ${textToSummarize}`;
               type="button"
               onClick={handleClearCurrentWindow}
               disabled={currentMessages.length === 0}
-              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-semibold text-[#7A7167] hover:text-[#B06A52] hover:bg-[#D98E73]/10 border border-[#EAE2D6] rounded-xl transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 text-[11px] sm:text-xs font-semibold text-[#7A7167] hover:text-[#B06A52] hover:bg-[#D98E73]/10 border border-[#EAE2D6] rounded-xl transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               title="Vaciar mensajes de esta ventana"
             >
               <Eraser className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Limpiar ventana</span>
+              <span className="hidden md:inline">Limpiar</span>
             </button>
           </div>
         </div>
+
+        {/* Píldoras de momentos cargados hoy (solo se muestra si ya hay cargas hoy, sin botones repetidos) */}
+        {cargasDeHoy.length > 0 && (
+          <div className="mb-2 shrink-0 bg-[#F6F3EC] border border-[#EAE2D6] rounded-2xl px-3 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#5A534D] shrink-0 flex items-center gap-1">
+              <Clock className="h-3 w-3 text-sky-700" />
+              Hoy ({cargasDeHoy.length}):
+            </span>
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              {cargasDeHoy.map((c) => {
+                const hora = c.horaExacta || clasificarFranjaHoraria(c.createdAt).horaExacta;
+                const actCorta = (c.actividadRealizada || c.metasEspecificas?.[0] || "Carga").slice(0, 18);
+                return (
+                  <span
+                    key={c.id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white border border-[#EAE2D6] text-[10px] font-semibold text-[#2D332D] shrink-0 shadow-2xs"
+                    title={c.note}
+                  >
+                    <strong className="text-sky-700">{hora}</strong>
+                    <span className="text-[#7A7167]">·</span>
+                    <span>📦 {actCorta}</span>
+                    <span className="text-amber-700">🧠 E:{c.energy}</span>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Date separator pill */}
         <div className="flex justify-center my-1.5 shrink-0">
@@ -1588,16 +1697,16 @@ ${textToSummarize}`;
         {/* Message history or Empty State */}
         <div className="flex-1 overflow-y-auto space-y-3.5 pr-1 flex flex-col">
           {currentMessages.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-2.5 my-auto animate-fade-in">
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-4 sm:p-6 space-y-2.5 my-auto animate-fade-in">
               <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-2xl bg-[#8BA888]/15 text-[#6D856B] flex items-center justify-center shadow-2xs">
                 <Brain className="h-5 w-5 sm:h-6 sm:w-6" />
               </div>
-              <div className="max-w-xs sm:max-w-sm space-y-1">
+              <div className="max-w-sm space-y-1.5">
                 <h3 className="text-xs sm:text-sm font-bold text-[#2D332D]">
                   {activeConv?.title || "Nueva conversación"}
                 </h3>
                 <p className="text-[11px] sm:text-xs text-[#7A7167] leading-relaxed">
-                  Escribe tu primer mensaje abajo para comenzar a reflexionar con {profile.companionName}.
+                  Escribí abajo o usá los botones superiores para cargar información del día o pedir tu reporte con consejos.
                 </p>
               </div>
             </div>
@@ -1608,7 +1717,7 @@ ${textToSummarize}`;
               if (isUser) {
                 return (
                   <div key={msg.id} className="flex justify-end">
-                    <div className="bg-[#7D9B7A] text-white rounded-2xl p-3 sm:p-4 text-xs sm:text-sm leading-relaxed max-w-[85%] sm:max-w-lg shadow-2xs">
+                    <div className="bg-[#7D9B7A] text-white rounded-2xl p-3 sm:p-4 text-xs sm:text-sm leading-relaxed max-w-[88%] sm:max-w-lg shadow-2xs">
                       {msg.text}
                     </div>
                   </div>
@@ -1616,58 +1725,97 @@ ${textToSummarize}`;
               }
 
               return (
-                <div key={msg.id} className="flex items-start gap-2.5 sm:gap-3 max-w-full sm:max-w-xl">
+                <div key={msg.id} className="flex items-start gap-2 sm:gap-3 max-w-full sm:max-w-2xl">
                   <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-full bg-[#E5DFC5] text-[#7A7167] flex items-center justify-center shrink-0 mt-0.5 font-bold text-[11px] sm:text-xs">
                     {profile.companionName.slice(0, 1)}
                   </div>
 
                   <div className="space-y-2 flex-1 min-w-0">
-                    {/* Tarjeta de Desglose Estructurado si el mensaje fue un reporte operativo */}
+                    {/* Tarjeta Dual Separada: 1. Carga de Datos Operativos vs 2. Aspecto Psicológico */}
                     {msg.desgloseReporte && (
-                      <div className="bg-[#F4F8F3] border border-[#8BA888]/40 rounded-2xl p-3 sm:p-4 space-y-2.5 text-xs text-[#2D332D] shadow-2xs">
-                        <div className="flex items-center justify-between pb-2 border-b border-[#8BA888]/20">
+                      <div className="bg-white border border-[#EAE2D6] rounded-2xl p-3 sm:p-4 space-y-3 text-xs text-[#2D332D] shadow-2xs">
+                        <div className="flex items-center justify-between pb-2 border-b border-[#EAE2D6] flex-wrap gap-1.5">
                           <div className="flex items-center gap-2">
                             <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                            <span className="font-bold text-[#355E3B] text-[11px] sm:text-xs uppercase tracking-wider">
-                              ✓ Reporte Operativo Asentado en Base de Datos
+                            <span className="font-bold text-[#2D332D] text-[11px] sm:text-xs uppercase tracking-wider">
+                              ✓ Momento del Día Registrado y Separado
                             </span>
                           </div>
-                          <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-md">
+                          <span className="text-[10px] font-bold text-sky-900 bg-sky-100/80 px-2 py-0.5 rounded-md">
                             {msg.desgloseReporte.horaRegistrada} hs · {msg.desgloseReporte.franjaLabel}
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                          <div className="bg-white/90 p-2 rounded-xl border border-[#EAE2D6]">
-                            <span className="text-[9px] text-[#7A7167] font-bold block uppercase">Energía / Ánimo</span>
-                            <span className="font-bold text-[#2D332D]">{msg.desgloseReporte.energia}/10 · Tranquilo</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          {/* BLOQUE 1: CARGA DE DATOS OPERATIVOS */}
+                          <div className="bg-[#F4F8FA] border border-sky-900/15 rounded-xl p-2.5 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-extrabold text-sky-900 uppercase tracking-wider flex items-center gap-1">
+                                <Database className="h-3 w-3 text-sky-700" />
+                                1. Carga de Datos (Operativo)
+                              </span>
+                              <span className="text-[10px] font-bold text-sky-800 bg-white px-1.5 py-0.5 rounded border border-sky-900/10">
+                                Prod: {msg.desgloseReporte.datosOperativos?.productividadScore ?? msg.desgloseReporte.productividad ?? 7}/10
+                              </span>
+                            </div>
+                            <div className="text-[11px] space-y-1 text-[#2D332D]">
+                              <div>
+                                <span className="font-bold text-[#5B707B]">Actividad: </span>
+                                <span className="font-medium">
+                                  {msg.desgloseReporte.datosOperativos?.actividadRealizada || "Avance en bloque actual"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="font-bold text-[#5B707B]">Metas: </span>
+                                <span className="font-semibold text-sky-900">
+                                  {(msg.desgloseReporte.datosOperativos?.metasActivas || msg.desgloseReporte.metasEspecificas || []).join(" · ") || "Estudio / Proyecto"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="font-bold text-[#5B707B]">Ventana / Corte: </span>
+                                <span>
+                                  {msg.desgloseReporte.datosOperativos?.ventanaDisponible || msg.desgloseReporte.ventanaDisponibleTexto}
+                                </span>
+                              </div>
+                              {msg.desgloseReporte.datosOperativos?.desvioDetectado && (
+                                <div className="text-[10px] font-semibold text-amber-900 bg-amber-100/70 px-2 py-0.5 rounded-md">
+                                  ⚠️ {msg.desgloseReporte.datosOperativos.desvioDetectado}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div className="bg-white/90 p-2 rounded-xl border border-[#EAE2D6]">
-                            <span className="text-[9px] text-[#7A7167] font-bold block uppercase">Foco / Presión</span>
-                            <span className="font-bold text-[#2D332D]">{msg.desgloseReporte.foco}/10 · Estrés {msg.desgloseReporte.estresPresion}/10</span>
-                          </div>
-                          <div className="bg-white/90 p-2 rounded-xl border border-[#EAE2D6]">
-                            <span className="text-[9px] text-[#7A7167] font-bold block uppercase">Método Exitoso</span>
-                            <span className="font-bold text-emerald-700 truncate block" title={msg.desgloseReporte.metodoAplicado}>
-                              Meditación 12m (Éxito)
-                            </span>
-                          </div>
-                          <div className="bg-white/90 p-2 rounded-xl border border-[#EAE2D6]">
-                            <span className="text-[9px] text-[#7A7167] font-bold block uppercase">Ventana Disponible</span>
-                            <span className="font-bold text-amber-800 truncate block">
-                              {msg.desgloseReporte.compromisoHorario ? `Hasta ${msg.desgloseReporte.compromisoHorario}` : "Inmediato"}
-                            </span>
-                          </div>
-                        </div>
 
-                        <div className="text-[11px] text-[#554E45] space-y-1 pt-1 border-t border-[#8BA888]/15">
-                          <div>
-                            <span className="font-bold text-[#2D332D]">Metas declaradas: </span>
-                            <span className="text-[#355E3B] font-semibold">{msg.desgloseReporte.metasEspecificas.join(" y ") || "Unidad 5 y 7"}</span>
-                          </div>
-                          <div>
-                            <span className="font-bold text-[#2D332D]">Fricción registrada: </span>
-                            <span>{msg.desgloseReporte.friccionDetectada}</span>
+                          {/* BLOQUE 2: ASPECTO PSICOLÓGICO */}
+                          <div className="bg-[#FAF6F0] border border-amber-900/15 rounded-xl p-2.5 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-extrabold text-amber-950 uppercase tracking-wider flex items-center gap-1">
+                                <Brain className="h-3 w-3 text-amber-700" />
+                                2. Aspecto Psicológico
+                              </span>
+                              <span className="text-[10px] font-bold text-emerald-800 bg-white px-1.5 py-0.5 rounded border border-amber-900/10">
+                                E:{msg.desgloseReporte.energia}/10 · Á:{msg.desgloseReporte.animo ?? msg.desgloseReporte.energia}/10 · P:{msg.desgloseReporte.estresPresion}/10
+                              </span>
+                            </div>
+                            <div className="text-[11px] space-y-1 text-[#2D332D]">
+                              <div>
+                                <span className="font-bold text-[#7A7167]">Estado: </span>
+                                <span className="font-semibold text-amber-950">
+                                  {msg.desgloseReporte.aspectoPsicologico?.estadoEtiqueta || "Tranquilo y operativo"}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="font-bold text-[#7A7167]">Fricción interna: </span>
+                                <span>
+                                  {msg.desgloseReporte.aspectoPsicologico?.friccionInterna || msg.desgloseReporte.friccionDetectada}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="font-bold text-[#7A7167]">Método regulación: </span>
+                                <span className="font-semibold text-emerald-800">
+                                  {msg.desgloseReporte.aspectoPsicologico?.metodoRegulacion || msg.desgloseReporte.metodoAplicado}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1713,9 +1861,8 @@ ${textToSummarize}`;
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input box & Bottom Resumir Bar */}
-        <div className="mt-2.5 shrink-0 space-y-1.5">
-          
+        {/* Input box & Bottom Resumir Bar (Sin botones repetidos arriba del input) */}
+        <div className="mt-2 shrink-0 space-y-1.5">
           <form
             onSubmit={handleSendMessage}
             className="bg-[#F5F2EB] border border-[#EAE2D6] rounded-2xl p-1.5 sm:p-2 pl-3 sm:pl-4 flex items-center gap-2 focus-within:border-[#7D9B7A] focus-within:bg-white transition shadow-2xs"
@@ -1725,27 +1872,27 @@ ${textToSummarize}`;
               type="text"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="Escribe tu mensaje reflexivo..."
+              placeholder="Escribí tu carga del momento o consulta psicológica..."
               disabled={isLoading}
-              className="flex-1 bg-transparent text-xs sm:text-sm text-[#2D332D] placeholder-[#A69D91] outline-none min-w-0"
+              className="flex-1 bg-transparent text-xs sm:text-sm text-[#2D332D] placeholder-[#A69D91] outline-none min-w-0 py-1"
             />
             <button
               type="submit"
               disabled={!inputText.trim() || isLoading}
-              className="h-8 w-8 sm:h-9 sm:w-9 rounded-xl bg-[#7D9B7A] hover:bg-[#6D856B] disabled:bg-[#EAE2D6] disabled:text-[#A69D91] text-white flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs"
-              title="Enviar mensaje"
+              className="h-9 w-9 rounded-xl bg-[#7D9B7A] hover:bg-[#6D856B] disabled:bg-[#EAE2D6] disabled:text-[#A69D91] text-white flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs"
+              title="Enviar al chat"
             >
-              <Send className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <Send className="h-4 w-4" />
             </button>
           </form>
 
-          {/* Bottom Bar: Analizar Contexto & Resumir y Subir Buttons */}
+          {/* Bottom Secondary Bar: Analizar Contexto & Resumir y Guardar */}
           <div className="flex items-center justify-between gap-2 pt-0.5">
             <button
               type="button"
               onClick={handleAnalyzeContext}
               disabled={isAnalyzingContext}
-              className="inline-flex items-center gap-1 sm:gap-1.5 px-3 py-1 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 shadow-2xs transition cursor-pointer disabled:opacity-50 shrink-0"
+              className="inline-flex items-center gap-1 sm:gap-1.5 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 shadow-2xs transition cursor-pointer disabled:opacity-50 shrink-0"
               title="Meta-análisis transversal del contexto evolutivo"
             >
               {isAnalyzingContext ? (
@@ -1753,14 +1900,14 @@ ${textToSummarize}`;
               ) : (
                 <Compass className="h-3 w-3 text-amber-700" />
               )}
-              <span>Analizar Contexto</span>
+              <span>Evolución 8D</span>
             </button>
 
             <button
               type="button"
               onClick={handleSummarizeAndUpload}
               disabled={isSummarizing || currentMessages.filter((m) => m.sender === "user").length === 0}
-              className="inline-flex items-center gap-1 sm:gap-1.5 px-3 sm:px-3.5 py-1 sm:py-1.5 rounded-full text-[11px] sm:text-xs font-bold bg-[#8BA888] hover:bg-[#6D856B] text-white shadow-2xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              className="inline-flex items-center gap-1 sm:gap-1.5 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold bg-[#EAE2D6]/80 hover:bg-[#8BA888] text-[#4A443F] hover:text-white shadow-2xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
               title="Sintetiza la conversación con Groq y sube el resumen a PocketBase"
             >
               {isSummarizing ? (
@@ -1770,14 +1917,12 @@ ${textToSummarize}`;
                 </>
               ) : (
                 <>
-                  <Sparkles className="h-3 w-3 text-amber-200" />
-                  <span className="hidden sm:inline">Resumir y Guardar en BD</span>
-                  <span className="sm:hidden">Resumir</span>
+                  <Sparkles className="h-3 w-3 text-[#6D856B]" />
+                  <span>Guardar Resumen Sesión</span>
                 </>
               )}
             </button>
           </div>
-
         </div>
 
       </section>

@@ -210,12 +210,34 @@ export interface Message {
     energia: number;
     foco: number;
     estresPresion: number;
+    animo?: number;
+    productividad?: number;
     friccionDetectada: string;
     metodoAplicado: string;
     resultadoMetodo: string;
     metasEspecificas: string[];
     compromisoHorario?: string;
     ventanaDisponibleTexto: string;
+    // Separación explícita: Carga de Datos Operativos vs Aspecto Psicológico
+    datosOperativos?: {
+      momentoDia: string;
+      actividadRealizada: string;
+      metasActivas: string[];
+      compromisoCorte?: string;
+      ventanaDisponible: string;
+      desvioDetectado?: string;
+      productividadScore: number;
+    };
+    aspectoPsicologico?: {
+      estadoEtiqueta: string;
+      energiaScore: number;
+      animoScore: number;
+      focoScore: number;
+      presionScore: number;
+      friccionInterna: string;
+      metodoRegulacion: string;
+      resultadoRegulacion: 'exito' | 'parcial' | 'fallo';
+    };
   } | null;
   suggestions?: {
     decision?: DecisionSuggestion | null;
@@ -263,11 +285,17 @@ export interface DailyLog {
   tipoReporte?: TipoObjetivo | 'estado_general';
   objetivoId?: string;                 // ID del ObjetivoEstructurado
   rasgoCodigo?: CodigoRasgo;
-  // Trazabilidad de Obstáculo vs Método Exitoso
+  // Trazabilidad de Obstáculo vs Método Exitoso (Aspecto Psicológico)
   huboObstaculo?: boolean;
   detonante?: string;                  // Qué disparó el bajón o tentación
   metodoAplicado?: string;             // Qué herramienta aplicó Juan
   resultadoMetodo?: 'exito' | 'parcial' | 'fallo';
+  estadoPsicologicoEtiqueta?: string;  // Ej: "Tranquilo y positivo, presionado por el reloj"
+  // Trazabilidad de Carga de Datos Operativos (Diferentes momentos del día)
+  actividadRealizada?: string;         // Qué se ejecutó en este bloque/momento
+  metasEspecificas?: string[];         // Unidades o tareas objetivo del bloque
+  compromisoHorario?: string;          // Ej: "15:00 hs"
+  desvioOperativo?: string;            // Ej: "Fogaje / tareas intermedias"
   note: string;
 }
 

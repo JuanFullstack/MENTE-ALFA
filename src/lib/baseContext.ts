@@ -700,7 +700,13 @@ COMO DETECTAR CUANDO LA MENTE O LOS INSTINTOS PRIMITIVOS ENGANAN A JUAN SIN QUE 
      * En lo social: no esperar reacciones ni resultados; acercarte con una pregunta simple y casual solo por practicar y divertirte, siendo un alma libre a la que le da igual si sale bien o mal.
 `;
 
-export type ModoInteraccionIA = 'sondeo_contexto_vago' | 'auditoria_como_vamos' | 'reporte_operativo_checkin' | 'consejo_tactico_directo';
+export type ModoInteraccionIA =
+  | 'sondeo_contexto_vago'
+  | 'auditoria_como_vamos'
+  | 'reporte_operativo_checkin'
+  | 'carga_datos_momento'
+  | 'reporte_con_consejos'
+  | 'consejo_tactico_directo';
 
 export function evaluarModoInteraccion(
   textoUsuario: string,
@@ -779,34 +785,44 @@ Juan acaba de enviar un mensaje corto o vago (como "estoy mal", "me siento traba
   2) Hacele exactamente 2 preguntas directas y cortas para destrabar el contexto y registrar el patrón horario:
      • ¿Qué hecho puntual pasó recién (viene por el lado de estudio/productividad o por algo social/personal)?
      • ¿Qué objetivo o tarea importante del día te está frenando esto ahora mismo y cómo estás de energía física del 1 al 10?`
-      : modo === "auditoria_como_vamos"
-      ? `MODO ACTIVO EN ESTE TURNO: [3. AUDITORÍA INTEGRAL "¿CÓMO VAMOS?"]
-Juan te está preguntando cómo vienen con los objetivos semanales/mensuales, los horarios de sus reportes y sus patrones.
-Basate ESTRICTAMENTE en los datos de <auditoria_objetivos_y_horarios> y respondé cubriendo estos 5 puntos con claridad y firmeza:
-1) CUMPLIMIENTO DE OBJETIVOS: Decile con números exactos cómo va en sus Objetivos de Crecimiento (Psicológicos) y en sus Objetivos Productivos (semanales y mensuales).
-2) EVALUACIÓN DEL HORARIO Y CONSTANCIA DE REPORTES (0 a 15 diarios): Evaluá a qué horas está haciendo los reportes, en qué franja horaria rinde mejor, en qué horario cae su ánimo/productividad y marcale sin filtro si hubo días o franjas con 0 reportes (puntos ciegos donde suele esconderse el "permitido" o la evasión).
-3) EN QUÉ ESTÁ FALLANDO Y PATRONES REPETIDOS: Señalá los obstáculos concretos donde tropezó esta semana.
-4) RETROALIMENTACIÓN CON EXPERIENCIAS NEGATIVAS DONDE TUVO ÉXITO (VALORACIÓN DEL MÉTODO): Citá las experiencias negativas psicológicas o productivas registradas en <auditoria_objetivos_y_horarios> y <experiencias_del_arbol> donde Juan estuvo en esa misma situación difícil pero TUVO ÉXITO, valorando explícitamente el método que aplicó esa vez (ej. levantarse antes de contar hasta 3 con agua fría y audio Horus, tolerar los primeros 15 min de confusión en estudio, respiración del león en lo de Renán, Ideal Adaptado con la ropa sucia o postura erguida en el boliche).
-5) ACCIÓN INMEDIATA PARA HOY (${horaInfo}): Dale una única consigna concreta para ganar la franja horaria actual.`
+      : modo === "carga_datos_momento"
+      ? `MODO ACTIVO EN ESTE TURNO: [5. CONFIRMACIÓN DE CARGA DE DATOS EN EL DÍA (OPTIMIZADO PARA MOBILE)]
+Juan acaba de cargar información de este momento del día (${horaInfo}) desde el celular.
+DATOS YA SEPARADOS Y GUARDADOS EN EL SISTEMA:
+${params.desgloseReporteTexto || "Datos operativos y aspecto psicológico registrados."}
+
+INSTRUCCIONES DE RESPUESTA (BREVE, CLARA Y SEPARADA PARA LECTURA RÁPIDA EN CELULAR):
+Respondé en máximo 2 párrafos cortos separando nítidamente:
+1) [DATOS CARGADOS (${horaInfo})]: Confirmá qué actividad operativa, metas (ej. unidades/tareas) y ventana horaria o compromiso quedaron registrados en la línea del día, advirtiendo en una frase si hubo desvío/fogaje.
+2) [ESTADO PSICOLÓGICO]: Confirmá cómo quedó asentado su estado mental (energía, ánimo, presión) y validá el método de regulación aplicado, dejándolo libre para seguir su bloque o pedir el Reporte con Consejos cuando lo necesite.`
+      : modo === "reporte_con_consejos" || modo === "auditoria_como_vamos"
+      ? `MODO ACTIVO EN ESTE TURNO: [3. REPORTE INTEGRAL DEL DÍA CON CONSEJOS (SEPARANDO DATOS OPERATIVOS VS PSICOLOGÍA)]
+Juan presionó el botón para pedir un REPORTE CON CONSEJOS basado en las cargas que fue haciendo en los distintos momentos del día (${horaInfo}).
+Basate ESTRICTAMENTE en <auditoria_objetivos_y_horarios> y en los registros cargados hoy, y estructurá tu respuesta separando claramente estos 3 bloques:
+
+BLOQUE 1 - BALANCE DE CARGA DE DATOS (OPERATIVO Y HORARIOS):
+- Recorré las cargas realizadas en los diferentes momentos de hoy (horarios, qué actividades o unidades avanzó, qué metas declaró, compromisos horarios y puntos ciegos si faltó reportar alguna franja).
+- Marcá el progreso numérico real en sus Objetivos Productivos y si hubo desvío en tareas intermedias ("fogaje").
+
+BLOQUE 2 - DIAGNÓSTICO PSICOLÓGICO (ESTADO, AUTOENGAÑO Y MÉTODOS):
+- Analizá por separado su evolución emocional hoy (energía, ánimo, foco, presión por el reloj) y el avance en sus Objetivos Psicológicos.
+- Desenmascará cualquier autoengaño o fricción mental detectada hoy y VALORÁ explícitamente los métodos psicológicos/biológicos que aplicó con éxito (ej. meditación de 12 min, agua fría y audio Horus, respiración del león, tolerar 15 min de confusión o Ideal Adaptado).
+
+BLOQUE 3 - CONSEJO TÁCTICO Y TIME-BOXING INMEDIATO (${horaInfo}):
+- Dale un plan de ataque concreto por bloques de tiempo (Time-Boxing con reloj en mano) para la ventana horaria disponible ahora mismo, uniendo la mecánica operativa con el decreto psicológico exacto.`
       : modo === "reporte_operativo_checkin"
-      ? `MODO ACTIVO EN ESTE TURNO: [4. RECEPCIÓN Y DESGLOSE DE REPORTE OPERATIVO / CHECK-IN]
+      ? `MODO ACTIVO EN ESTE TURNO: [4. RECEPCIÓN Y DESGLOSE DE REPORTE OPERATIVO / CHECK-IN SEPARADO]
 Juan acaba de enviar un reporte de avance y estado de su jornada (${horaInfo}).
 DATOS YA REGISTRADOS EN EL SISTEMA:
 ${params.desgloseReporteTexto || "Métricas, método exitoso y metas de estudio asentadas en ZenDB y PocketBase."}
 
-INSTRUCCIONES CLAVE DE RESPUESTA:
-1) CONFIRMAR EL DESGLOSE DE LO GUARDADO:
-   Iniciá confirmando claramente qué datos quedaron asentados en su registro: horario exacto, métricas de energía/ánimo, el método aplicado registrado como ÉXITO ante la fricción, y las metas declaradas para hoy.
-2) VALORAR EL MÉTODO QUE FUNCIONÓ:
-   Valorá con frialdad de ingeniero que a las 10:30 hs haya ejecutado la meditación de 12 min para revertir el desgano y recuperar la calma. Destacá que ese es exactamente el protocolo a consolidar: ante el bajón, corte mecánico con meditación/NSDR en vez de evadirse.
-3) FRENAR EL DESVÍO EN TAREAS SECUNDARIAS ("FOGAJE"):
-   Marcale sin anestesia que ponerse a 'mejorar la app' o hacer tareas intermedias cuando el objetivo principal era estudiar es la trampa clásica de la procrastinación productiva ("fogaje").
-4) PLAN TÁCTICO POR BLOQUES (TIME-BOXING) PARA SUS METAS REALES:
-   NO le digas que no busque terminar la Unidad 5 y 7 ni desprecies sus objetivos. Al contrario: armale un plan táctico con el reloj en mano para los minutos exactos que le quedan antes de su compromiso de las 15:00 hs para que liquide o avance masivamente en la Unidad 5 y barra la Unidad 7:
-   • Bloque 1 (primeros 75 min): Ataque a Unidad 5 (conceptos clave y ejercicios prácticos troncales).
-   • Pausa Táctica de 5 min: Agua fría, respiración de león, postura erguida.
-   • Bloque 2 (siguientes 60 min): Barrido de Unidad 7 (estructura general, definiciones y preguntas de examen).
-   • Cierre 14:50 a 15:00 hs: Corte limpio para salir al compromiso con la conciencia impecable.`
+INSTRUCCIONES CLAVE DE RESPUESTA (SEPARANDO DATOS OPERATIVOS DE LO PSICOLÓGICO):
+1) SOBRE LA CARGA DE DATOS OPERATIVOS:
+   Confirmá qué datos operativos quedaron asentados (horario exacto, actividad hecha, metas como Unidad 5 y 7, y compromiso horario) y frená de raíz cualquier desvío en tareas secundarias ("fogaje" / mejoras de la app fuera de hora).
+2) SOBRE EL ASPECTO PSICOLÓGICO:
+   Separadamente, evaluá su estado interno (energía, ánimo, presión por el reloj) y valorá con frialdad de ingeniero el método de regulación que aplicó con éxito (ej. meditación de 12 min a las 10:30 hs para cortar el desgano).
+3) CONSEJO TÁCTICO POR BLOQUES (TIME-BOXING):
+   Armale un plan táctico con el reloj en mano para la ventana exacta disponible antes de su compromiso (ej. Bloque 1 de 75 min para Unidad 5 -> Pausa de 5 min agua fría/respiración de león -> Bloque 2 de 60 min para Unidad 7 -> Cierre limpio).`
       : `MODO ACTIVO EN ESTE TURNO: [2. CONSEJO TÁCTICO DIRECTO CON GUÍA PRÁCTICA]
 1) DESENMASCARAR EL AUTOENGAÑO: Mostrale cómo su mente o el demonio interno lo quiere engañar (el "permitido corto" de LOL/videos/memes, "mañana empiezo", buscar aprobación externa en el boliche o encapricharse cuando un escenario es imperfecto).
 2) APLICAR EL PROTOCOLO EXACTO DE SU GUÍA SEGÚN EL CASO:

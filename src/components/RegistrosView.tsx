@@ -59,10 +59,15 @@ export default function RegistrosView({
   const [formDecreto, setFormDecreto] = useState(PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].decretoClave);
   const [formProtocolo, setFormProtocolo] = useState(PLANTILLAS_RASGOS_OFICIALES["PSI-1_autoconfianza"].protocoloPasos.join("\n"));
 
-  // Quick log slider states
-  const [energy, setEnergy] = useState(6);
+  // Quick log states (Separados: Datos Operativos vs Aspecto Psicológico)
+  const [energy, setEnergy] = useState(7);
   const [motivation, setMotivation] = useState(7);
   const [stress, setStress] = useState(4);
+  const [actividadLog, setActividadLog] = useState("");
+  const [metasLog, setMetasLog] = useState("");
+  const [compromisoLog, setCompromisoLog] = useState("");
+  const [estadoPsiLog, setEstadoPsiLog] = useState("Tranquilo y enfocado");
+  const [metodoPsiLog, setMetodoPsiLog] = useState("");
   const [note, setNote] = useState("");
 
   // Daily report manual generator states
@@ -186,10 +191,14 @@ export default function RegistrosView({
     onUpdateObjetivos?.(actualizados);
   };
 
-  // Save quick numeric log
+  // Save quick numeric log (Separando Carga de Datos vs Aspecto Psicológico)
   const handleSaveLog = (e: React.FormEvent) => {
     e.preventDefault();
     const info = clasificarFranjaHoraria();
+    const metasArr = metasLog
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const newLog: DailyLog = {
       id: `log-${Date.now()}`,
@@ -202,12 +211,24 @@ export default function RegistrosView({
       stress,
       moodScore: energy,
       productivityScore: motivation,
-      note: note.trim() || `[${info.horaExacta}] Registro rápido del estado emocional.`,
+      actividadRealizada: actividadLog.trim() || "Avance en bloque actual",
+      metasEspecificas: metasArr.length > 0 ? metasArr : undefined,
+      compromisoHorario: compromisoLog.trim() || undefined,
+      estadoPsicologicoEtiqueta: estadoPsiLog.trim() || "Estable",
+      metodoAplicado: metodoPsiLog.trim() || undefined,
+      resultadoMetodo: "exito",
+      note:
+        note.trim() ||
+        `[${info.horaExacta}] 📦 Datos: ${actividadLog.trim() || "Avance"} (${metasArr.join(", ") || "General"}) | 🧠 Psicología: ${estadoPsiLog.trim()} (${metodoPsiLog.trim() || "Sin fricción"})`,
     };
 
     onUpdateLogs([newLog, ...logs]);
     createRegistroPB(newLog);
     setNote("");
+    setActividadLog("");
+    setMetasLog("");
+    setCompromisoLog("");
+    setMetodoPsiLog("");
   };
 
   const handleDeleteLog = (id: string) => {
@@ -1174,148 +1195,233 @@ Responde UNICAMENTE con un JSON con esta estructura exacta:
       )}
 
       {/* ========================================================
-          SUBTAB 2: REGISTROS RÁPIDOS (SLIDERS & LOGS)
+          SUBTAB 2: CARGAS DEL DÍA (DATOS OPERATIVOS VS PSICOLÓGICO)
           ======================================================== */}
       {activeSubTab === "rapidos" && (
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-start">
-          <form onSubmit={handleSaveLog} className="lg:col-span-3 bg-white border border-[#EAE2D6] rounded-3xl p-6 md:p-8 shadow-sm space-y-6">
-            <div className="flex items-center gap-2 border-b border-[#EAE2D6] pb-4">
-              <Sliders className="h-4 w-4 text-[#8BA888]" />
-              <h3 className="text-sm font-bold text-[#2D332D]">Registrar Estado Rápido de Hoy</h3>
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 sm:gap-8 items-start">
+          <form onSubmit={handleSaveLog} className="lg:col-span-3 bg-white border border-[#EAE2D6] rounded-3xl p-4 sm:p-6 md:p-8 shadow-sm space-y-5">
+            <div className="flex items-center justify-between border-b border-[#EAE2D6] pb-3">
+              <div className="flex items-center gap-2">
+                <Sliders className="h-4 w-4 text-[#8BA888]" />
+                <h3 className="text-sm font-bold text-[#2D332D]">Cargar Momento del Día (Datos vs Psicología)</h3>
+              </div>
+              <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-sky-100 text-sky-900">
+                Hoy: {reportesHoyCount} cargas
+              </span>
             </div>
 
-            <div className="space-y-6">
-              {/* Slider 1: Energía */}
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-[#4A443F] uppercase tracking-wider">Nivel de Energía</label>
-                  <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${getEnergyLabel(energy).color}`}>
-                    {getEnergyLabel(energy).label} ({energy}/10)
-                  </span>
+            {/* BLOQUE 1: CARGA DE DATOS OPERATIVOS */}
+            <div className="bg-[#F6F9F8] border border-sky-900/15 rounded-2xl p-4 space-y-3">
+              <h4 className="text-xs font-extrabold text-sky-950 uppercase tracking-wider">
+                📦 1. Carga de Datos Operativos (Qué hiciste y Metas)
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-[#5B707B] uppercase block mb-1">Actividad del Momento</label>
+                  <input
+                    type="text"
+                    value={actividadLog}
+                    onChange={(e) => setActividadLog(e.target.value)}
+                    placeholder="Ej: Estudio Ingeniería / Tesis / Entreno"
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs outline-none focus:border-sky-700"
+                  />
                 </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  value={energy}
-                  onChange={(e) => setEnergy(parseInt(e.target.value))}
-                  className="w-full accent-[#8BA888] h-1.5 bg-[#EAE2D6] rounded-lg cursor-pointer transition"
-                />
+                <div>
+                  <label className="text-[10px] font-bold text-[#5B707B] uppercase block mb-1">Metas / Unidades (separar por coma)</label>
+                  <input
+                    type="text"
+                    value={metasLog}
+                    onChange={(e) => setMetasLog(e.target.value)}
+                    placeholder="Ej: Unidad 5, Unidad 7"
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs outline-none focus:border-sky-700"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="text-[10px] font-bold text-[#5B707B] uppercase block mb-1">Compromiso / Corte Horario</label>
+                  <input
+                    type="text"
+                    value={compromisoLog}
+                    onChange={(e) => setCompromisoLog(e.target.value)}
+                    placeholder="Ej: 15:00 hs"
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs outline-none focus:border-sky-700"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-bold text-[#4A443F] uppercase">Productividad / Avance</label>
+                    <span className="font-bold text-xs text-sky-800">{motivation}/10</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={motivation}
+                    onChange={(e) => setMotivation(parseInt(e.target.value))}
+                    className="w-full accent-sky-700 h-2 bg-[#EAE2D6] rounded-lg cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* BLOQUE 2: ASPECTO PSICOLÓGICO */}
+            <div className="bg-[#FAF6F0] border border-amber-900/15 rounded-2xl p-4 space-y-3">
+              <h4 className="text-xs font-extrabold text-amber-950 uppercase tracking-wider">
+                🧠 2. Aspecto Psicológico (Estado Interno y Método)
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-[#7A7167] uppercase block mb-1">Estado Psicológico</label>
+                  <input
+                    type="text"
+                    value={estadoPsiLog}
+                    onChange={(e) => setEstadoPsiLog(e.target.value)}
+                    placeholder="Ej: Tranquilo y positivo, presionado por el reloj"
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs outline-none focus:border-amber-700"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-[#7A7167] uppercase block mb-1">Método de Regulación Aplicado</label>
+                  <input
+                    type="text"
+                    value={metodoPsiLog}
+                    onChange={(e) => setMetodoPsiLog(e.target.value)}
+                    placeholder="Ej: Meditación 12 min / Respiración León"
+                    className="w-full px-3 py-2 bg-white border border-[#EAE2D6] rounded-xl text-xs outline-none focus:border-amber-700"
+                  />
+                </div>
               </div>
 
-              {/* Slider 2: Motivación */}
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-[#4A443F] uppercase tracking-wider">Nivel de Motivación</label>
-                  <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${getMotivationLabel(motivation).color}`}>
-                    {getMotivationLabel(motivation).label} ({motivation}/10)
-                  </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-bold text-[#4A443F] uppercase">Energía / Ánimo</label>
+                    <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${getEnergyLabel(energy).color}`}>
+                      {energy}/10
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={energy}
+                    onChange={(e) => setEnergy(parseInt(e.target.value))}
+                    className="w-full accent-[#8BA888] h-2 bg-[#EAE2D6] rounded-lg cursor-pointer"
+                  />
                 </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  value={motivation}
-                  onChange={(e) => setMotivation(parseInt(e.target.value))}
-                  className="w-full accent-[#8BA888] h-1.5 bg-[#EAE2D6] rounded-lg cursor-pointer transition"
-                />
-              </div>
 
-              {/* Slider 3: Estrés */}
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-[#4A443F] uppercase tracking-wider">Nivel de Estrés</label>
-                  <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] ${getStressLabel(stress).color}`}>
-                    {getStressLabel(stress).label} ({stress}/10)
-                  </span>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-bold text-[#4A443F] uppercase">Presión / Estrés</label>
+                    <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${getStressLabel(stress).color}`}>
+                      {stress}/10
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={stress}
+                    onChange={(e) => setStress(parseInt(e.target.value))}
+                    className="w-full accent-[#D98E73] h-2 bg-[#EAE2D6] rounded-lg cursor-pointer"
+                  />
                 </div>
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  value={stress}
-                  onChange={(e) => setStress(parseInt(e.target.value))}
-                  className="w-full accent-[#8BA888] h-1.5 bg-[#EAE2D6] rounded-lg cursor-pointer transition"
-                />
               </div>
+            </div>
 
-              <div className="space-y-2 pt-2">
-                <div className="flex items-center gap-1.5">
-                  <NotepadText className="h-4 w-4 text-[#7A7167]" />
-                  <label className="text-xs font-bold text-[#4A443F] uppercase tracking-wider">Notas de Contexto (Introspección)</label>
-                </div>
-                <textarea
-                  rows={4}
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  className="block w-full px-4 py-3 border border-[#EAE2D6] rounded-2xl text-[#4A443F] placeholder-[#A69D91] text-xs outline-none resize-none transition focus:ring-2 focus:ring-[#8BA888]/20 focus:border-[#8BA888]"
-                  placeholder="¿Qué ocurrió en tu jornada? ¿Qué pensabas? ¿Qué hiciste al respecto? ¿Utilizaste alguna técnica?"
-                />
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <NotepadText className="h-4 w-4 text-[#7A7167]" />
+                <label className="text-xs font-bold text-[#4A443F] uppercase tracking-wider">Nota Libre Adicional (Opcional)</label>
               </div>
+              <textarea
+                rows={2}
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                className="block w-full px-4 py-2.5 border border-[#EAE2D6] rounded-2xl text-[#4A443F] placeholder-[#A69D91] text-xs outline-none resize-none transition focus:border-[#8BA888]"
+                placeholder="Detalle extra si querés agregar algo más..."
+              />
             </div>
 
             <button
               type="submit"
-              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl shadow-md text-xs font-bold text-white bg-[#8BA888] hover:bg-[#6D856B] transition cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl shadow-md text-xs sm:text-sm font-bold text-white bg-sky-700 hover:bg-sky-800 transition cursor-pointer min-h-[46px]"
             >
               <Plus className="h-4 w-4" />
-              Guardar Registro Rápido
+              Guardar Carga del Momento
             </button>
           </form>
 
           {/* Historical Logs List */}
-          <div className="lg:col-span-2 bg-white border border-[#EAE2D6] rounded-3xl p-6 shadow-sm flex flex-col h-[650px]">
+          <div className="lg:col-span-2 bg-white border border-[#EAE2D6] rounded-3xl p-4 sm:p-6 shadow-sm flex flex-col h-[650px]">
             <div className="flex items-center justify-between border-b border-[#EAE2D6] pb-4 shrink-0">
-              <h3 className="text-sm font-bold text-[#2D332D]">Historial de Registros Rápidos</h3>
+              <h3 className="text-sm font-bold text-[#2D332D]">Historial de Cargas por Momento</h3>
               <span className="text-[10px] bg-[#F9F6F1] text-[#7A7167] font-bold px-2 py-0.5 rounded-full">
-                {logs.length} Días
+                {logs.length} Cargas
               </span>
             </div>
 
-            <div className="flex-1 overflow-y-auto pt-4 space-y-4 pr-1">
+            <div className="flex-1 overflow-y-auto pt-4 space-y-3.5 pr-1">
               {logs.length === 0 ? (
                 <p className="text-xs text-[#A69D91] text-center py-12">
-                  No has guardado registros diarios aún.
+                  No has guardado cargas del día aún.
                 </p>
               ) : (
                 logs.map((log) => {
                   const dateObj = new Date(log.createdAt);
-                  const dayStr = dateObj.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' });
-                  const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  const dayStr = dateObj.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+                  const timeStr = log.horaExacta || dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
                   return (
-                    <div key={log.id} className="border border-[#EAE2D6]/80 bg-[#F9F6F1]/50 rounded-2xl p-4 relative group space-y-3 hover:bg-[#F9F6F1] transition">
+                    <div key={log.id} className="border border-[#EAE2D6] bg-[#FDFBF7] rounded-2xl p-3.5 relative group space-y-2.5 hover:border-[#8BA888] transition">
                       <button
                         onClick={() => handleDeleteLog(log.id)}
-                        className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#D98E73]/10 text-[#7A7167] hover:text-[#D98E73] transition cursor-pointer shrink-0"
+                        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#D98E73]/10 text-[#7A7167] hover:text-[#D98E73] transition cursor-pointer shrink-0"
                         title="Eliminar este registro"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
 
-                      <div>
-                        <h4 className="text-xs font-bold text-[#4A443F] capitalize leading-tight">{dayStr}</h4>
-                        <p className="text-[9px] text-[#A69D91] mt-0.5">{timeStr}</p>
+                      <div className="flex items-center justify-between pr-6">
+                        <span className="text-xs font-bold text-[#2D332D] capitalize">{dayStr}</span>
+                        <span className="text-[10px] font-bold text-sky-900 bg-sky-100 px-2 py-0.5 rounded-md">
+                          🕒 {timeStr} hs
+                        </span>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-1">
-                        <div className="bg-white border border-[#EAE2D6] rounded-lg p-1.5 text-center">
-                          <p className="text-[8px] text-[#A69D91] uppercase tracking-wider font-bold">Energía</p>
-                          <p className="text-xs font-extrabold text-[#8BA888] mt-0.5">{log.energy}</p>
+                      {/* Separación Visual: Datos vs Psicología */}
+                      <div className="space-y-1.5 text-[11px]">
+                        <div className="bg-[#F4F8FA] border border-sky-900/10 rounded-xl p-2">
+                          <span className="text-[9px] font-extrabold text-sky-900 uppercase block">
+                            📦 1. Datos Operativos (Prod: {log.productivityScore ?? log.motivation}/10)
+                          </span>
+                          <p className="text-[#2D332D] font-medium mt-0.5">
+                            {log.actividadRealizada || "Registro operativo"}
+                            {log.metasEspecificas && log.metasEspecificas.length > 0
+                              ? ` · Metas: ${log.metasEspecificas.join(", ")}`
+                              : ""}
+                            {log.compromisoHorario ? ` · Corte: ${log.compromisoHorario}` : ""}
+                          </p>
                         </div>
-                        <div className="bg-white border border-[#EAE2D6] rounded-lg p-1.5 text-center">
-                          <p className="text-[8px] text-[#A69D91] uppercase tracking-wider font-bold">Motivación</p>
-                          <p className="text-xs font-extrabold text-[#7A7167] mt-0.5">{log.motivation}</p>
-                        </div>
-                        <div className="bg-white border border-[#EAE2D6] rounded-lg p-1.5 text-center">
-                          <p className="text-[8px] text-[#A69D91] uppercase tracking-wider font-bold">Estrés</p>
-                          <p className="text-xs font-extrabold text-[#D98E73] mt-0.5">{log.stress}</p>
+
+                        <div className="bg-[#FAF6F0] border border-amber-900/10 rounded-xl p-2">
+                          <span className="text-[9px] font-extrabold text-amber-950 uppercase block">
+                            🧠 2. Aspecto Psicológico (E:{log.energy}/10 · P:{log.stress}/10)
+                          </span>
+                          <p className="text-[#2D332D] mt-0.5">
+                            {log.estadoPsicologicoEtiqueta || "Estable"}
+                            {log.metodoAplicado ? ` · Método: ${log.metodoAplicado}` : ""}
+                            {log.detonante ? ` · Fricción: ${log.detonante}` : ""}
+                          </p>
                         </div>
                       </div>
 
-                      <p className="text-xs text-[#4A443F] leading-relaxed font-medium whitespace-pre-wrap">
-                        {log.note}
-                      </p>
+                      {log.note && (
+                        <p className="text-[11px] text-[#7A7167] leading-snug whitespace-pre-wrap">
+                          {log.note}
+                        </p>
+                      )}
                     </div>
                   );
                 })

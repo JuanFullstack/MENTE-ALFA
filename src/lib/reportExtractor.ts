@@ -36,6 +36,26 @@ export interface ReporteOperativoDesglose {
   ventanaDisponibleTexto: string;
   planTimeBoxing: string[];
   resumenNota: string;
+  // Separación explícita: Carga de Datos Operativos vs Aspecto Psicológico
+  datosOperativos: {
+    momentoDia: string;
+    actividadRealizada: string;
+    metasActivas: string[];
+    compromisoCorte?: string;
+    ventanaDisponible: string;
+    desvioDetectado?: string;
+    productividadScore: number;
+  };
+  aspectoPsicologico: {
+    estadoEtiqueta: string;
+    energiaScore: number;
+    animoScore: number;
+    focoScore: number;
+    presionScore: number;
+    friccionInterna: string;
+    metodoRegulacion: string;
+    resultadoRegulacion: "exito" | "parcial" | "fallo";
+  };
 }
 
 export interface ReporteOperativoResultado {
@@ -166,7 +186,28 @@ export function extraerReporteDeterminista(
     `Cierre 14:50 a ${compromisoHorario || "15:00 hs"}: Corte limpio con la tranquilidad de haber cumplido antes de salir.`,
   ];
 
-  const resumenNota = `Check-in ${horaRegistrada} hs: ${friccionDetectada}. Método: ${metodoAplicado}. Metas: ${metasEspecificas.join(", ") || "Estudio"}. Ventana: ${ventanaDisponibleTexto}.`;
+  const resumenNota = `Check-in ${horaRegistrada} hs: [DATOS] Act: ${
+    /hice bastante|mejorar la aplicaci[oó]n|cosas intermedia/i.test(txt)
+      ? "Tareas intermedias / mejoras en app"
+      : "Avance en bloque actual"
+  } | Metas: ${metasEspecificas.join(", ") || "Estudio"} | Ventana: ${ventanaDisponibleTexto}. [PSICOLOGÍA] Fricción: ${friccionDetectada} | Método: ${metodoAplicado}.`;
+
+  const actividadRealizada = /mejorar la aplicaci[oó]n|cosas intermedia|fogaje/i.test(txt)
+    ? "Tareas operativas intermedias / mejoras en la app"
+    : /estudi|unidad|tesis|c[oó]digo/i.test(txt)
+    ? `Bloque de avance (${metasEspecificas.join(", ") || "Estudio / Proyecto"})`
+    : texto.trim().slice(0, 90);
+
+  const desvioDetectado = /fogaje|cosas intermedia|mejorar la aplicaci[oó]n|no eran el objetivo/i.test(txt)
+    ? "Desvío en tareas intermedias ('fogaje') fuera del objetivo central"
+    : undefined;
+
+  const estadoPartes: string[] = [];
+  if (/tranquilo/i.test(txt)) estadoPartes.push("Tranquilo");
+  if (/positivo/i.test(txt)) estadoPartes.push("Positivo");
+  if (/presionado|presi[oó]n/i.test(txt)) estadoPartes.push("Presionado por el reloj");
+  if (/desganado|desgano/i.test(txt)) estadoPartes.push("Desgano superado");
+  const estadoEtiqueta = estadoPartes.length > 0 ? estadoPartes.join(" · ") : "Estable y operativo";
 
   return {
     horaRegistrada,
@@ -189,6 +230,25 @@ export function extraerReporteDeterminista(
     ventanaDisponibleTexto,
     planTimeBoxing,
     resumenNota,
+    datosOperativos: {
+      momentoDia: `${horaRegistrada} hs (${infoHora.labelFranja})`,
+      actividadRealizada,
+      metasActivas: metasEspecificas.length > 0 ? metasEspecificas : ["Avance del bloque actual"],
+      compromisoCorte: compromisoHorario,
+      ventanaDisponible: ventanaDisponibleTexto,
+      desvioDetectado,
+      productividadScore: productividad,
+    },
+    aspectoPsicologico: {
+      estadoEtiqueta,
+      energiaScore: energia,
+      animoScore: animo,
+      focoScore: foco,
+      presionScore: estresPresion,
+      friccionInterna: friccionDetectada,
+      metodoRegulacion: metodoAplicado,
+      resultadoRegulacion: huboMetodoExitoso ? "exito" : huboObstaculo ? "parcial" : "exito",
+    },
   };
 }
 
@@ -199,9 +259,10 @@ export function extraerReporteDeterminista(
 export async function extraerReporteOperativo(
   texto: string,
   horaActualFallback: string,
-  objetivosExistentes: ObjetivoEstructurado[] = []
+  objetivosExistentes: ObjetivoEstructurado[] = [],
+  forzarComoReporte = false
 ): Promise<ReporteOperativoResultado> {
-  const esReporte = detectarEsReporteOperativo(texto);
+  const esReporte = forzarComoReporte || detectarEsReporteOperativo(texto);
   const infoHora = clasificarFranjaHoraria();
   const fechaHoy = new Date().toISOString().split("T")[0];
 
@@ -209,7 +270,7 @@ export async function extraerReporteOperativo(
 
   // Intentar refinamiento asíncrono rápido con Groq Qwen si es posible
   try {
-    const prompt = `Analiza quirúrgicamente este reporte de jornada de Juan y responde en JSON puro:
+    const prompt = `Analiza quirúrgicamente este registro de Juan separando DATO OPERATIVO vs ASPECTO PSICOLÓGICO y responde en JSON puro:
 TEXTO: "${texto.trim()}"
 
 Extrae exactamente este esquema JSON:
@@ -220,9 +281,12 @@ Extrae exactamente este esquema JSON:
   "estresPresion": ${desglose.estresPresion},
   "animo": ${desglose.animo},
   "productividad": ${desglose.productividad},
+  "actividadRealizada": "Qué tarea o avance concreto hizo",
+  "desvioDetectado": "Si hizo tareas secundarias/fogaje o vacío si no hubo",
+  "estadoEtiqueta": "Ej: Tranquilo y positivo, presionado por el reloj",
   "huboObstaculo": true,
-  "friccionDetectada": "Texto conciso",
-  "metodoAplicado": "Método puntual que funcionó",
+  "friccionDetectada": "Gatillo o bloqueo psicológico detectado",
+  "metodoAplicado": "Método psicológico/regulación aplicado",
   "resultadoMetodo": "exito",
   "metasEspecificas": ["Unidad 5", "Unidad 7"],
   "compromisoHorario": "15:00 hs",
@@ -231,33 +295,70 @@ Extrae exactamente este esquema JSON:
 
     const raw = await chatWithGroq(
       [
-        { role: "system", content: "Extractor analítico de reportes diarios. Responde solo JSON válido." },
+        { role: "system", content: "Extractor analítico que separa estrictamente Carga de Datos Operativos vs Aspectos Psicológicos. Responde solo JSON válido." },
         { role: "user", content: prompt },
       ],
       {
         model: EXTRACTION_GROQ_MODEL,
         temperature: 0.1,
-        max_tokens: 350,
+        max_tokens: 380,
         jsonMode: true,
       }
     );
 
     const parsed = JSON.parse(raw);
     if (parsed && parsed.horaRegistrada) {
+      const nuevaEnergia = typeof parsed.energia === "number" ? parsed.energia : desglose.energia;
+      const nuevoFoco = typeof parsed.foco === "number" ? parsed.foco : desglose.foco;
+      const nuevoEstres = typeof parsed.estresPresion === "number" ? parsed.estresPresion : desglose.estresPresion;
+      const nuevoAnimo = typeof parsed.animo === "number" ? parsed.animo : desglose.animo;
+      const nuevaProd = typeof parsed.productividad === "number" ? parsed.productividad : desglose.productividad;
+      const nuevaFriccion = parsed.friccionDetectada || desglose.friccionDetectada;
+      const nuevoMetodo = parsed.metodoAplicado || desglose.metodoAplicado;
+      const nuevoResultado =
+        parsed.resultadoMetodo === "exito" || parsed.resultadoMetodo === "fallo"
+          ? parsed.resultadoMetodo
+          : desglose.resultadoMetodo;
+      const nuevasMetas =
+        Array.isArray(parsed.metasEspecificas) && parsed.metasEspecificas.length > 0
+          ? parsed.metasEspecificas
+          : desglose.metasEspecificas;
+      const nuevoCompromiso = parsed.compromisoHorario || desglose.compromisoHorario;
+      const nuevaVentana = parsed.ventanaDisponibleTexto || desglose.ventanaDisponibleTexto;
+
       desglose = {
         ...desglose,
         horaRegistrada: parsed.horaRegistrada || desglose.horaRegistrada,
-        energia: typeof parsed.energia === "number" ? parsed.energia : desglose.energia,
-        foco: typeof parsed.foco === "number" ? parsed.foco : desglose.foco,
-        estresPresion: typeof parsed.estresPresion === "number" ? parsed.estresPresion : desglose.estresPresion,
-        animo: typeof parsed.animo === "number" ? parsed.animo : desglose.animo,
-        productividad: typeof parsed.productividad === "number" ? parsed.productividad : desglose.productividad,
-        friccionDetectada: parsed.friccionDetectada || desglose.friccionDetectada,
-        metodoAplicado: parsed.metodoAplicado || desglose.metodoAplicado,
-        resultadoMetodo: parsed.resultadoMetodo === "exito" || parsed.resultadoMetodo === "fallo" ? parsed.resultadoMetodo : desglose.resultadoMetodo,
-        metasEspecificas: Array.isArray(parsed.metasEspecificas) && parsed.metasEspecificas.length > 0 ? parsed.metasEspecificas : desglose.metasEspecificas,
-        compromisoHorario: parsed.compromisoHorario || desglose.compromisoHorario,
-        ventanaDisponibleTexto: parsed.ventanaDisponibleTexto || desglose.ventanaDisponibleTexto,
+        energia: nuevaEnergia,
+        foco: nuevoFoco,
+        estresPresion: nuevoEstres,
+        animo: nuevoAnimo,
+        productividad: nuevaProd,
+        friccionDetectada: nuevaFriccion,
+        metodoAplicado: nuevoMetodo,
+        resultadoMetodo: nuevoResultado,
+        metasEspecificas: nuevasMetas,
+        compromisoHorario: nuevoCompromiso,
+        ventanaDisponibleTexto: nuevaVentana,
+        datosOperativos: {
+          momentoDia: `${parsed.horaRegistrada || desglose.horaRegistrada} hs (${desglose.franjaLabel})`,
+          actividadRealizada: parsed.actividadRealizada || desglose.datosOperativos.actividadRealizada,
+          metasActivas: nuevasMetas,
+          compromisoCorte: nuevoCompromiso,
+          ventanaDisponible: nuevaVentana,
+          desvioDetectado: parsed.desvioDetectado || desglose.datosOperativos.desvioDetectado,
+          productividadScore: nuevaProd,
+        },
+        aspectoPsicologico: {
+          estadoEtiqueta: parsed.estadoEtiqueta || desglose.aspectoPsicologico.estadoEtiqueta,
+          energiaScore: nuevaEnergia,
+          animoScore: nuevoAnimo,
+          focoScore: nuevoFoco,
+          presionScore: nuevoEstres,
+          friccionInterna: nuevaFriccion,
+          metodoRegulacion: nuevoMetodo,
+          resultadoRegulacion: nuevoResultado,
+        },
       };
     }
   } catch (_e) {
@@ -283,6 +384,11 @@ Extrae exactamente este esquema JSON:
     detonante: desglose.friccionDetectada,
     metodoAplicado: desglose.metodoAplicado,
     resultadoMetodo: desglose.resultadoMetodo,
+    estadoPsicologicoEtiqueta: desglose.aspectoPsicologico.estadoEtiqueta,
+    actividadRealizada: desglose.datosOperativos.actividadRealizada,
+    metasEspecificas: desglose.metasEspecificas,
+    compromisoHorario: desglose.compromisoHorario,
+    desvioOperativo: desglose.datosOperativos.desvioDetectado,
     note: desglose.resumenNota,
   };
 
@@ -306,15 +412,19 @@ Extrae exactamente este esquema JSON:
     };
   }
 
-  const desgloseTexto = `📋 **DATOS EXTRAÍDOS Y REGISTRADOS EN BASE DE DATOS:**
-- **Hora y Franja:** ${desglose.horaRegistrada} hs (${desglose.franjaLabel})
-- **Biometría Psicológica:** Energía: ${desglose.energia}/10 | Foco: ${desglose.foco}/10 | Presión por el Reloj: ${desglose.estresPresion}/10 | Ánimo: ${desglose.animo}/10
-- **Fricción Detectada:** ${desglose.friccionDetectada}
-- **Método Registrado como Éxito:** ${desglose.metodoAplicado}
-- **Objetivo Vinculado:** [PROD-3] Estudio Ingeniería + Tolerancia a la Confusión
-- **Metas Específicas del Turno:** ${desglose.metasEspecificas.join(" y ") || "Unidad 5 y 7"}
-- **Ventana Operativa Disponible:** ${desglose.ventanaDisponibleTexto}
-- **Destino del Almacenamiento:** ✅ Guardado en Logs Diarios (ZenDB y PocketBase), Objetivo [PROD-3] y Ficha Inmutable de Memoria.`;
+  const desgloseTexto = `📦 **1. CARGA DE DATOS OPERATIVOS (MOMENTO DEL DÍA):**
+- **Hora y Franja:** ${desglose.datosOperativos.momentoDia}
+- **Actividad Ejecutada:** ${desglose.datosOperativos.actividadRealizada}
+- **Desvío Operativo ('Fogaje'):** ${desglose.datosOperativos.desvioDetectado || "Ninguno"}
+- **Metas Activas del Bloque:** ${desglose.datosOperativos.metasActivas.join(" y ") || "Estudio / Avance"}
+- **Ventana Disponible / Compromiso:** ${desglose.datosOperativos.ventanaDisponible}
+- **Productividad del Momento:** ${desglose.datosOperativos.productividadScore}/10
+
+🧠 **2. ASPECTO PSICOLÓGICO (ESTADO Y REGULACIÓN):**
+- **Estado Mental:** ${desglose.aspectoPsicologico.estadoEtiqueta}
+- **Biometría Psicológica:** Energía: ${desglose.aspectoPsicologico.energiaScore}/10 | Ánimo: ${desglose.aspectoPsicologico.animoScore}/10 | Foco: ${desglose.aspectoPsicologico.focoScore}/10 | Presión: ${desglose.aspectoPsicologico.presionScore}/10
+- **Fricción / Autoengaño Detectado:** ${desglose.aspectoPsicologico.friccionInterna}
+- **Método Psicológico Aplicado:** ${desglose.aspectoPsicologico.metodoRegulacion} (${desglose.aspectoPsicologico.resultadoRegulacion.toUpperCase()})`;
 
   return {
     esReporte,
@@ -323,4 +433,46 @@ Extrae exactamente este esquema JSON:
     desgloseTexto,
     fichaVivencia,
   };
+}
+
+/**
+ * Compila todas las cargas realizadas en los diferentes momentos del día de hoy,
+ * separando claramente la línea de tiempo de Datos Operativos vs la Evolución Psicológica.
+ */
+export function compilarCargasDelDiaSeparadas(logs: DailyLog[]): string {
+  const hoyIso = new Date().toISOString().split("T")[0];
+  const logsHoy = (logs || [])
+    .filter((l) => (l.dateKey || clasificarFranjaHoraria(l.createdAt).dateKey) === hoyIso)
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  if (logsHoy.length === 0) {
+    return "Aún no hay cargas registradas en el día de hoy.";
+  }
+
+  const lineasOperativas = logsHoy.map((l, idx) => {
+    const info = clasificarFranjaHoraria(l.createdAt);
+    const hora = l.horaExacta || info.horaExacta;
+    const act = l.actividadRealizada || l.note.slice(0, 90);
+    const metas = l.metasEspecificas && l.metasEspecificas.length > 0 ? ` | Metas: ${l.metasEspecificas.join(", ")}` : "";
+    const comp = l.compromisoHorario ? ` | Compromiso: ${l.compromisoHorario}` : "";
+    const desvio = l.desvioOperativo ? ` | ⚠️ Desvío: ${l.desvioOperativo}` : "";
+    return `  ${idx + 1}. [${hora} hs · ${info.franja}] Prod: ${l.productivityScore ?? l.motivation}/10 -> ${act}${metas}${comp}${desvio}`;
+  });
+
+  const lineasPsicologicas = logsHoy.map((l, idx) => {
+    const info = clasificarFranjaHoraria(l.createdAt);
+    const hora = l.horaExacta || info.horaExacta;
+    const estado = l.estadoPsicologicoEtiqueta || (l.stress >= 7 ? "Presionado/Tenso" : "Estable");
+    const friccion = l.detonante ? ` | Fricción: ${l.detonante}` : "";
+    const metodo = l.metodoAplicado ? ` | Método aplicado: ${l.metodoAplicado} (${(l.resultadoMetodo || "exito").toUpperCase()})` : "";
+    return `  ${idx + 1}. [${hora} hs] Estado: ${estado} (Energía ${l.energy}/10, Ánimo ${l.moodScore ?? l.energy}/10, Presión ${l.stress}/10)${friccion}${metodo}`;
+  });
+
+  return `HISTORIAL DE CARGAS DE HOY (${logsHoy.length} momentos registrados en el día):
+
+📦 A) LÍNEA DE TIEMPO DE CARGA DE DATOS OPERATIVOS (QUÉ HIZO Y METAS POR HORARIO):
+${lineasOperativas.join("\n")}
+
+🧠 B) EVOLUCIÓN DEL ASPECTO PSICOLÓGICO EN EL DÍA (ESTADO, FRICCIONES Y MÉTODOS):
+${lineasPsicologicas.join("\n")}`;
 }

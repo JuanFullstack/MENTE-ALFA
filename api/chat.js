@@ -551,31 +551,39 @@ Juan acaba de enviar un mensaje corto o vago (como "estoy mal", "me siento traba
   1) Mencion\xE1 con naturalidad la hora actual (${horaInfo}) para anclar el momento del d\xEDa.
   2) Hacele exactamente 2 preguntas directas y cortas para destrabar el contexto y registrar el patr\xF3n horario:
      \u2022 \xBFQu\xE9 hecho puntual pas\xF3 reci\xE9n (viene por el lado de estudio/productividad o por algo social/personal)?
-     \u2022 \xBFQu\xE9 objetivo o tarea importante del d\xEDa te est\xE1 frenando esto ahora mismo y c\xF3mo est\xE1s de energ\xEDa f\xEDsica del 1 al 10?` : modo === "auditoria_como_vamos" ? `MODO ACTIVO EN ESTE TURNO: [3. AUDITOR\xCDA INTEGRAL "\xBFC\xD3MO VAMOS?"]
-Juan te est\xE1 preguntando c\xF3mo vienen con los objetivos semanales/mensuales, los horarios de sus reportes y sus patrones.
-Basate ESTRICTAMENTE en los datos de <auditoria_objetivos_y_horarios> y respond\xE9 cubriendo estos 5 puntos con claridad y firmeza:
-1) CUMPLIMIENTO DE OBJETIVOS: Decile con n\xFAmeros exactos c\xF3mo va en sus Objetivos de Crecimiento (Psicol\xF3gicos) y en sus Objetivos Productivos (semanales y mensuales).
-2) EVALUACI\xD3N DEL HORARIO Y CONSTANCIA DE REPORTES (0 a 15 diarios): Evalu\xE1 a qu\xE9 horas est\xE1 haciendo los reportes, en qu\xE9 franja horaria rinde mejor, en qu\xE9 horario cae su \xE1nimo/productividad y marcale sin filtro si hubo d\xEDas o franjas con 0 reportes (puntos ciegos donde suele esconderse el "permitido" o la evasi\xF3n).
-3) EN QU\xC9 EST\xC1 FALLANDO Y PATRONES REPETIDOS: Se\xF1al\xE1 los obst\xE1culos concretos donde tropez\xF3 esta semana.
-4) RETROALIMENTACI\xD3N CON EXPERIENCIAS NEGATIVAS DONDE TUVO \xC9XITO (VALORACI\xD3N DEL M\xC9TODO): Cit\xE1 las experiencias negativas psicol\xF3gicas o productivas registradas en <auditoria_objetivos_y_horarios> y <experiencias_del_arbol> donde Juan estuvo en esa misma situaci\xF3n dif\xEDcil pero TUVO \xC9XITO, valorando expl\xEDcitamente el m\xE9todo que aplic\xF3 esa vez (ej. levantarse antes de contar hasta 3 con agua fr\xEDa y audio Horus, tolerar los primeros 15 min de confusi\xF3n en estudio, respiraci\xF3n del le\xF3n en lo de Ren\xE1n, Ideal Adaptado con la ropa sucia o postura erguida en el boliche).
-5) ACCI\xD3N INMEDIATA PARA HOY (${horaInfo}): Dale una \xFAnica consigna concreta para ganar la franja horaria actual.` : modo === "reporte_operativo_checkin" ? `MODO ACTIVO EN ESTE TURNO: [4. RECEPCI\xD3N Y DESGLOSE DE REPORTE OPERATIVO / CHECK-IN]
+     \u2022 \xBFQu\xE9 objetivo o tarea importante del d\xEDa te est\xE1 frenando esto ahora mismo y c\xF3mo est\xE1s de energ\xEDa f\xEDsica del 1 al 10?` : modo === "carga_datos_momento" ? `MODO ACTIVO EN ESTE TURNO: [5. CONFIRMACI\xD3N DE CARGA DE DATOS EN EL D\xCDA (OPTIMIZADO PARA MOBILE)]
+Juan acaba de cargar informaci\xF3n de este momento del d\xEDa (${horaInfo}) desde el celular.
+DATOS YA SEPARADOS Y GUARDADOS EN EL SISTEMA:
+${params.desgloseReporteTexto || "Datos operativos y aspecto psicol\xF3gico registrados."}
+
+INSTRUCCIONES DE RESPUESTA (BREVE, CLARA Y SEPARADA PARA LECTURA R\xC1PIDA EN CELULAR):
+Respond\xE9 en m\xE1ximo 2 p\xE1rrafos cortos separando n\xEDtidamente:
+1) [DATOS CARGADOS (${horaInfo})]: Confirm\xE1 qu\xE9 actividad operativa, metas (ej. unidades/tareas) y ventana horaria o compromiso quedaron registrados en la l\xEDnea del d\xEDa, advirtiendo en una frase si hubo desv\xEDo/fogaje.
+2) [ESTADO PSICOL\xD3GICO]: Confirm\xE1 c\xF3mo qued\xF3 asentado su estado mental (energ\xEDa, \xE1nimo, presi\xF3n) y valid\xE1 el m\xE9todo de regulaci\xF3n aplicado, dej\xE1ndolo libre para seguir su bloque o pedir el Reporte con Consejos cuando lo necesite.` : modo === "reporte_con_consejos" || modo === "auditoria_como_vamos" ? `MODO ACTIVO EN ESTE TURNO: [3. REPORTE INTEGRAL DEL D\xCDA CON CONSEJOS (SEPARANDO DATOS OPERATIVOS VS PSICOLOG\xCDA)]
+Juan presion\xF3 el bot\xF3n para pedir un REPORTE CON CONSEJOS basado en las cargas que fue haciendo en los distintos momentos del d\xEDa (${horaInfo}).
+Basate ESTRICTAMENTE en <auditoria_objetivos_y_horarios> y en los registros cargados hoy, y estructur\xE1 tu respuesta separando claramente estos 3 bloques:
+
+BLOQUE 1 - BALANCE DE CARGA DE DATOS (OPERATIVO Y HORARIOS):
+- Recorr\xE9 las cargas realizadas en los diferentes momentos de hoy (horarios, qu\xE9 actividades o unidades avanz\xF3, qu\xE9 metas declar\xF3, compromisos horarios y puntos ciegos si falt\xF3 reportar alguna franja).
+- Marc\xE1 el progreso num\xE9rico real en sus Objetivos Productivos y si hubo desv\xEDo en tareas intermedias ("fogaje").
+
+BLOQUE 2 - DIAGN\xD3STICO PSICOL\xD3GICO (ESTADO, AUTOENGA\xD1O Y M\xC9TODOS):
+- Analiz\xE1 por separado su evoluci\xF3n emocional hoy (energ\xEDa, \xE1nimo, foco, presi\xF3n por el reloj) y el avance en sus Objetivos Psicol\xF3gicos.
+- Desenmascar\xE1 cualquier autoenga\xF1o o fricci\xF3n mental detectada hoy y VALOR\xC1 expl\xEDcitamente los m\xE9todos psicol\xF3gicos/biol\xF3gicos que aplic\xF3 con \xE9xito (ej. meditaci\xF3n de 12 min, agua fr\xEDa y audio Horus, respiraci\xF3n del le\xF3n, tolerar 15 min de confusi\xF3n o Ideal Adaptado).
+
+BLOQUE 3 - CONSEJO T\xC1CTICO Y TIME-BOXING INMEDIATO (${horaInfo}):
+- Dale un plan de ataque concreto por bloques de tiempo (Time-Boxing con reloj en mano) para la ventana horaria disponible ahora mismo, uniendo la mec\xE1nica operativa con el decreto psicol\xF3gico exacto.` : modo === "reporte_operativo_checkin" ? `MODO ACTIVO EN ESTE TURNO: [4. RECEPCI\xD3N Y DESGLOSE DE REPORTE OPERATIVO / CHECK-IN SEPARADO]
 Juan acaba de enviar un reporte de avance y estado de su jornada (${horaInfo}).
 DATOS YA REGISTRADOS EN EL SISTEMA:
 ${params.desgloseReporteTexto || "M\xE9tricas, m\xE9todo exitoso y metas de estudio asentadas en ZenDB y PocketBase."}
 
-INSTRUCCIONES CLAVE DE RESPUESTA:
-1) CONFIRMAR EL DESGLOSE DE LO GUARDADO:
-   Inici\xE1 confirmando claramente qu\xE9 datos quedaron asentados en su registro: horario exacto, m\xE9tricas de energ\xEDa/\xE1nimo, el m\xE9todo aplicado registrado como \xC9XITO ante la fricci\xF3n, y las metas declaradas para hoy.
-2) VALORAR EL M\xC9TODO QUE FUNCION\xD3:
-   Valor\xE1 con frialdad de ingeniero que a las 10:30 hs haya ejecutado la meditaci\xF3n de 12 min para revertir el desgano y recuperar la calma. Destac\xE1 que ese es exactamente el protocolo a consolidar: ante el baj\xF3n, corte mec\xE1nico con meditaci\xF3n/NSDR en vez de evadirse.
-3) FRENAR EL DESV\xCDO EN TAREAS SECUNDARIAS ("FOGAJE"):
-   Marcale sin anestesia que ponerse a 'mejorar la app' o hacer tareas intermedias cuando el objetivo principal era estudiar es la trampa cl\xE1sica de la procrastinaci\xF3n productiva ("fogaje").
-4) PLAN T\xC1CTICO POR BLOQUES (TIME-BOXING) PARA SUS METAS REALES:
-   NO le digas que no busque terminar la Unidad 5 y 7 ni desprecies sus objetivos. Al contrario: armale un plan t\xE1ctico con el reloj en mano para los minutos exactos que le quedan antes de su compromiso de las 15:00 hs para que liquide o avance masivamente en la Unidad 5 y barra la Unidad 7:
-   \u2022 Bloque 1 (primeros 75 min): Ataque a Unidad 5 (conceptos clave y ejercicios pr\xE1cticos troncales).
-   \u2022 Pausa T\xE1ctica de 5 min: Agua fr\xEDa, respiraci\xF3n de le\xF3n, postura erguida.
-   \u2022 Bloque 2 (siguientes 60 min): Barrido de Unidad 7 (estructura general, definiciones y preguntas de examen).
-   \u2022 Cierre 14:50 a 15:00 hs: Corte limpio para salir al compromiso con la conciencia impecable.` : `MODO ACTIVO EN ESTE TURNO: [2. CONSEJO T\xC1CTICO DIRECTO CON GU\xCDA PR\xC1CTICA]
+INSTRUCCIONES CLAVE DE RESPUESTA (SEPARANDO DATOS OPERATIVOS DE LO PSICOL\xD3GICO):
+1) SOBRE LA CARGA DE DATOS OPERATIVOS:
+   Confirm\xE1 qu\xE9 datos operativos quedaron asentados (horario exacto, actividad hecha, metas como Unidad 5 y 7, y compromiso horario) y fren\xE1 de ra\xEDz cualquier desv\xEDo en tareas secundarias ("fogaje" / mejoras de la app fuera de hora).
+2) SOBRE EL ASPECTO PSICOL\xD3GICO:
+   Separadamente, evalu\xE1 su estado interno (energ\xEDa, \xE1nimo, presi\xF3n por el reloj) y valor\xE1 con frialdad de ingeniero el m\xE9todo de regulaci\xF3n que aplic\xF3 con \xE9xito (ej. meditaci\xF3n de 12 min a las 10:30 hs para cortar el desgano).
+3) CONSEJO T\xC1CTICO POR BLOQUES (TIME-BOXING):
+   Armale un plan t\xE1ctico con el reloj en mano para la ventana exacta disponible antes de su compromiso (ej. Bloque 1 de 75 min para Unidad 5 -> Pausa de 5 min agua fr\xEDa/respiraci\xF3n de le\xF3n -> Bloque 2 de 60 min para Unidad 7 -> Cierre limpio).` : `MODO ACTIVO EN ESTE TURNO: [2. CONSEJO T\xC1CTICO DIRECTO CON GU\xCDA PR\xC1CTICA]
 1) DESENMASCARAR EL AUTOENGA\xD1O: Mostrale c\xF3mo su mente o el demonio interno lo quiere enga\xF1ar (el "permitido corto" de LOL/videos/memes, "ma\xF1ana empiezo", buscar aprobaci\xF3n externa en el boliche o encapricharse cuando un escenario es imperfecto).
 2) APLICAR EL PROTOCOLO EXACTO DE SU GU\xCDA SEG\xDAN EL CASO:
    - Si es Autoconfianza/Social: Postura erguida inmediata, mirada firme sin esquivar, respiraci\xF3n lenta y decretos ("Yo controlo c\xF3mo sentirme", "Si no cumplo los est\xE1ndares de alguien, que se pudra") o actitud Alma Libre sin esperar resultado (como en Santos a las 3 AM, Artur o con Lucho).
