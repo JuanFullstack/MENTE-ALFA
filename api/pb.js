@@ -3,8 +3,11 @@ var POCKETBASE_HOST = "http://167.234.243.247:8090";
 async function handler(req, res) {
   try {
     const rawUrl = req.url || "";
-    const cleanPath = rawUrl.replace(/^\/api\/pb/, "");
-    const targetUrl = `${POCKETBASE_HOST}${cleanPath.startsWith("/") ? "" : "/"}${cleanPath}`;
+    let cleanPath = rawUrl.replace(/^\/api\/pb\/?/, "");
+    if (!cleanPath.startsWith("api/")) {
+      cleanPath = `api/${cleanPath}`;
+    }
+    const targetUrl = `${POCKETBASE_HOST}/${cleanPath}`;
     const headers = {};
     if (req.headers["content-type"]) {
       headers["Content-Type"] = req.headers["content-type"];

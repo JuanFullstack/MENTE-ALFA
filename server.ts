@@ -43,8 +43,11 @@ app.use(express.json());
 // Proxy PocketBase para evitar errores de red o Mixed Content
 app.all("/api/pb*", async (req, res) => {
   try {
-    const cleanPath = req.url.replace(/^\/api\/pb/, "");
-    const targetUrl = `http://167.234.243.247:8090${cleanPath.startsWith("/") ? "" : "/"}${cleanPath}`;
+    let cleanPath = req.url.replace(/^\/api\/pb\/?/, "");
+    if (!cleanPath.startsWith("api/")) {
+      cleanPath = `api/${cleanPath}`;
+    }
+    const targetUrl = `http://167.234.243.247:8090/${cleanPath}`;
     const headers: Record<string, string> = {};
     if (req.headers["content-type"]) headers["Content-Type"] = req.headers["content-type"] as string;
     if (req.headers["authorization"]) headers["Authorization"] = req.headers["authorization"] as string;

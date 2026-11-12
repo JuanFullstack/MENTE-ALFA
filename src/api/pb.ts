@@ -10,8 +10,11 @@ export default async function handler(req: any, res: any) {
   try {
     const rawUrl: string = req.url || "";
     // Eliminar el prefijo /api/pb
-    const cleanPath = rawUrl.replace(/^\/api\/pb/, "");
-    const targetUrl = `${POCKETBASE_HOST}${cleanPath.startsWith("/") ? "" : "/"}${cleanPath}`;
+    let cleanPath = rawUrl.replace(/^\/api\/pb\/?/, "");
+    if (!cleanPath.startsWith("api/")) {
+      cleanPath = `api/${cleanPath}`;
+    }
+    const targetUrl = `${POCKETBASE_HOST}/${cleanPath}`;
 
     const headers: Record<string, string> = {};
     if (req.headers["content-type"]) {
