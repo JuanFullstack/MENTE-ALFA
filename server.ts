@@ -25,6 +25,10 @@ import {
   generarAuditoriaComoVamos,
   formatearAuditoriaParaPrompt,
 } from "./src/lib/progressAuditor";
+import {
+  compilarHistorialCompletoCargas,
+  sincronizarLogsConMensajesChatA,
+} from "./src/lib/dateTimeUtils";
 import { consolidarNodosPatronesPorPunteros, construirArbolDesdeDatos } from "./src/lib/storage";
 import { FichaVivenciaInmutable, RamaTematica, Conversation } from "./src/types";
 
@@ -511,21 +515,27 @@ Responde únicamente con el objeto JSON válido.`;
     // TELEMETRÍA HORARIA Y MODO OPERATIVO DE INTERACCIÓN
     const infoHora = clasificarFranjaHoraria();
     const horaActualTextoFinal = horaActualTexto || `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
+    const evalModo = evaluarModoInteraccion(ultimoMensajeUsuario, messages || []);
     const modoInteraccionFinal: ModoInteraccionIA =
-      modoInteraccion || evaluarModoInteraccion(ultimoMensajeUsuario, messages || []).modo;
+      modoInteraccion || evalModo.modo;
 
+    const logsSincronizados = sincronizarLogsConMensajesChatA(logs || [], messages || []);
     let auditoriaTextoFinal = auditoriaComoVamosTexto;
-    if (!auditoriaTextoFinal && (objetivosEstructurados || logs)) {
+    if (!auditoriaTextoFinal && (objetivosEstructurados || logsSincronizados.length > 0)) {
       const audObj = generarAuditoriaComoVamos(
-        logs || [],
+        logsSincronizados,
         objetivosEstructurados || [],
         memories || [],
         strategies || []
       );
-      auditoriaTextoFinal = formatearAuditoriaParaPrompt(audObj);
+      const historialCargas = compilarHistorialCompletoCargas(logs || [], messages || []);
+      auditoriaTextoFinal = `${historialCargas}\n\n${formatearAuditoriaParaPrompt(audObj)}`;
     }
 
-    // FASE 3: Prompt de Inferencia Final Reparado con 4 Modos y Telemetría
+    const desgloseReporteTextoFinal =
+      desgloseReporteTexto || compilarHistorialCompletoCargas(logs || [], messages || []);
+
+    // FASE 3: Prompt de Inferencia Final Reparado con Modos y Evaluador de Suficiencia de Contexto
     const systemInstruction = buildRepairedSystemPrompt({
       ramaActiva,
       tagsDetectados,
@@ -535,13 +545,14 @@ Responde únicamente con el objeto JSON válido.`;
       horaActualTexto: horaActualTextoFinal,
       modoInteraccion: modoInteraccionFinal,
       auditoriaComoVamosTexto: auditoriaTextoFinal,
-      desgloseReporteTexto,
+      desgloseReporteTexto: desgloseReporteTextoFinal,
+      evaluacionContexto: evalModo.evaluacionContexto,
     });
 
     const geminiKey = getGeminiKey(req);
     const groqKey = getGroqKey(req);
 
-    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL (Temperatura 0.25)
+    // 1. Google AI Studio (Gemini) como OPCIÓN PRINCIPAL
     if (geminiKey) {
       try {
         const recentMessages = (messages || []).slice(-5);
@@ -560,7 +571,7 @@ Responde únicamente con el objeto JSON válido.`;
           apiKey: geminiKey,
           systemInstruction,
           contents: conversationContents,
-          temperature: 0.25,
+          temperature: 0.35,
         });
 
         const { formattedMessage, tacticalAnalysis } = parseRepairedTacticalOutput(
@@ -574,7 +585,7 @@ Responde únicamente con el objeto JSON válido.`;
           tacticalAnalysis,
           detectedState: {
             tags: [ramaActiva.toUpperCase(), ...tagsDetectados],
-            description: `Rama: ${ramaActiva} | Modo: ${modoInteraccionFinal} | Fichas: ${fichasPodadas.map((f) => f.id).join(", ")}`,
+            description: `Rama: ${ramaActiva} | Modo: ${modoInteraccionFinal}`,
           },
           energyLevel: 7,
         });
@@ -583,7 +594,7 @@ Responde únicamente con el objeto JSON válido.`;
       }
     }
 
-    // 2. Groq Cloud AI con Prefill Adaptado según Modo
+    // 2. Groq Cloud AI
     if (groqKey) {
       try {
         const recentMessages = (messages || []).slice(-5);
@@ -595,24 +606,18 @@ Responde únicamente con el objeto JSON válido.`;
           })),
         ];
 
-        const prefillAUsar =
-          modoInteraccionFinal === "sondeo_contexto_vago"
-            ? "<analisis_contextual>\n- Modo y especificidad: [sondeo_contexto_vago]"
-            : ASSISTANT_PREFILL_TAG;
-
         const content = await callGroqChat(groqMessages, {
           apiKey: groqKey,
           model: getGroqModel(req),
           jsonMode: false,
-          temperature: 0.25,
+          temperature: 0.35,
           max_tokens: 900,
-          assistantPrefill: prefillAUsar,
         });
 
         const { formattedMessage, tacticalAnalysis } = parseRepairedTacticalOutput(
           content,
           ramaActiva,
-          true
+          false
         );
 
         return res.json({

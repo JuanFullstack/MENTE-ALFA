@@ -4,25 +4,29 @@
  */
 
 import React from "react";
-import { 
-  Leaf, 
-  Settings, 
-  MessageSquare, 
-  Brain, 
-  CalendarRange, 
-  BarChart2, 
+import {
+  Leaf,
+  Settings,
+  MessageSquare,
+  Brain,
+  CalendarRange,
+  BarChart2,
   Plus,
   Compass,
   Database,
-  BarChart3
+  Menu,
+  Eraser,
 } from "lucide-react";
 import { UserProfile } from "../lib/storage";
+import { ChatChannel } from "../types";
 
 export type NavTab = "conversar" | "sistema" | "memoria" | "registros" | "patrones" | "configuracion";
 
 interface TopNavbarProps {
   activeTab: NavTab;
   onTabChange: (tab: NavTab) => void;
+  activeChatChannel?: ChatChannel;
+  onSelectChatChannel?: (channel: ChatChannel) => void;
   onOpenQuickLog: () => void;
   onOpenAddMemory: () => void;
   onRequestReport?: () => void;
@@ -32,9 +36,10 @@ interface TopNavbarProps {
 export default function TopNavbar({
   activeTab,
   onTabChange,
+  activeChatChannel = "carga_datos",
+  onSelectChatChannel,
   onOpenQuickLog,
   onOpenAddMemory,
-  onRequestReport,
   profile,
 }: TopNavbarProps) {
   const navTabs = [
@@ -47,32 +52,39 @@ export default function TopNavbar({
 
   return (
     <>
-      {/* Top Header Navbar */}
-      <header className="h-14 sm:h-16 bg-[#FDFBF7] border-b border-[#EAE2D6] px-3 sm:px-6 flex items-center justify-between shrink-0 font-sans select-none z-20">
-        
-        {/* Brand logo */}
-        <div 
-          onClick={() => onTabChange("conversar")}
-          className="flex items-center gap-2 cursor-pointer group shrink-0"
-        >
-          <div className="h-8 w-8 sm:h-9 sm:w-9 rounded-full bg-[#7D9B7A] flex items-center justify-center text-white shadow-xs group-hover:scale-105 transition">
-            <Leaf className="h-4 w-4 sm:h-4.5 sm:w-4.5" />
-          </div>
-          <div className="flex items-baseline gap-1">
-            <span className="text-base sm:text-lg font-bold text-[#2D332D] tracking-tight">Aura</span>
-            <span className="text-[10px] sm:text-xs font-semibold text-[#8BA888]">/IA</span>
-          </div>
+      {/* Barra Superior Única y Optimizada (Sin texto 'Aura' y con botones clave en íconos) */}
+      <header className="h-12 sm:h-14 bg-[#FDFBF7] border-b border-[#EAE2D6] px-2.5 sm:px-5 flex items-center justify-between shrink-0 font-sans select-none z-20 gap-2">
+        {/* Izquierda: Menú de conversaciones (en mobile) + Ícono limpio sin palabra Aura */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {activeTab === "conversar" && (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("mente-alfa:toggle-left-drawer"))}
+              className="lg:hidden h-8 w-8 rounded-xl border border-[#EAE2D6] bg-white text-[#5A534D] hover:text-[#2D332D] flex items-center justify-center shadow-2xs cursor-pointer"
+              title="Conversaciones"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onTabChange("conversar")}
+            className="h-8 w-8 rounded-full bg-[#7D9B7A] flex items-center justify-center text-white shadow-xs hover:scale-105 transition cursor-pointer shrink-0"
+            title="Inicio"
+          >
+            <Leaf className="h-4 w-4" />
+          </button>
         </div>
 
-        {/* Desktop Navigation Center Tabs */}
-        <nav className="hidden md:flex items-center gap-6 lg:gap-8">
+        {/* Centro (Desktop): Pestañas de navegación */}
+        <nav className="hidden md:flex items-center gap-5 lg:gap-7">
           {navTabs.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
-                className={`relative py-4 text-xs sm:text-sm font-medium transition cursor-pointer ${
+                className={`relative py-3.5 text-xs sm:text-sm font-medium transition cursor-pointer ${
                   isActive
                     ? "text-[#2D332D] font-bold"
                     : "text-[#7A7167] hover:text-[#2D332D]"
@@ -87,47 +99,96 @@ export default function TopNavbar({
           })}
         </nav>
 
-        {/* Right Action Buttons: Optimizados para Mobile (Cargar Datos vs Pedir Reporte) */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5">
+        {/* Derecha: Botones Clave en Íconos (Carga BD, Consultas, Sliders, Memoria, Limpiar, Ajustes) */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* BOTÓN 1 (ÍCONO): CHAT A — CARGA DIARIA A BD */}
           <button
-            onClick={onOpenAddMemory}
-            className="hidden sm:flex border-2 border-dashed border-[#8BA888] hover:border-[#6D856B] bg-[#8BA888]/10 hover:bg-[#8BA888]/20 text-[#2D332D] text-[11px] sm:text-xs font-bold px-3 sm:px-3.5 py-1.5 rounded-full shadow-2xs transition items-center gap-1.5 cursor-pointer shrink-0"
-            title="Agregar nueva nota mental a la memoria"
+            type="button"
+            onClick={() => {
+              onTabChange("conversar");
+              onSelectChatChannel?.("carga_datos");
+            }}
+            className={`h-9 w-9 sm:h-9 sm:w-9 rounded-xl transition flex items-center justify-center cursor-pointer shrink-0 shadow-2xs ${
+              activeTab === "conversar" && activeChatChannel === "carga_datos"
+                ? "bg-[#1E5678] text-white ring-2 ring-sky-400/50"
+                : "bg-sky-700/12 hover:bg-sky-700/20 text-sky-900 border border-sky-700/25"
+            }`}
+            title="Chat Carga Diaria (envía a Base de Datos)"
+            aria-label="Chat Carga Diaria"
           >
-            <Plus className="h-3.5 w-3.5 text-[#6D856B]" />
-            <span>Nota Mental</span>
+            <Database className="h-4 w-4" />
           </button>
 
+          {/* BOTÓN 2 (ÍCONO): CHAT B — CONSULTAS */}
           <button
+            type="button"
+            onClick={() => {
+              onTabChange("conversar");
+              onSelectChatChannel?.("consultas");
+            }}
+            className={`h-9 w-9 sm:h-9 sm:w-9 rounded-xl transition flex items-center justify-center cursor-pointer shrink-0 shadow-2xs ${
+              activeTab === "conversar" && activeChatChannel === "consultas"
+                ? "bg-[#6D856B] text-white ring-2 ring-[#8BA888]/60"
+                : "bg-[#8BA888]/15 hover:bg-[#8BA888]/25 text-[#2D332D] border border-[#8BA888]/35"
+            }`}
+            title="Chat Consultas"
+            aria-label="Chat Consultas"
+          >
+            <MessageSquare className="h-4 w-4" />
+          </button>
+
+          {/* BOTÓN 3 (ÍCONO): CARGA CON SLIDERS / NOTA RÁPIDA */}
+          <button
+            type="button"
             onClick={onOpenQuickLog}
-            className="bg-sky-700 hover:bg-sky-800 text-white text-[11px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 sm:py-2 rounded-full shadow-xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
-            title="Cargar información del momento del día (Datos Operativos + Aspecto Psicológico)"
+            className="h-9 w-9 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs"
+            title="Carga rápida con sliders"
+            aria-label="Carga rápida con sliders"
           >
-            <Database className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Cargar Momento</span>
-            <span className="sm:hidden">Cargar</span>
+            <Plus className="h-4 w-4" />
           </button>
 
-          {onRequestReport && (
+          {/* BOTÓN 4 (ÍCONO): MEMORIA / CONTEXTO */}
+          <button
+            type="button"
+            onClick={() => {
+              if (activeTab === "conversar" && window.innerWidth < 1280) {
+                window.dispatchEvent(new CustomEvent("mente-alfa:toggle-right-drawer"));
+              } else {
+                onOpenAddMemory();
+              }
+            }}
+            className="h-9 w-9 rounded-xl bg-white hover:bg-[#F5F1E8] text-[#6D856B] border border-[#EAE2D6] flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs"
+            title="Memoria y Contexto"
+            aria-label="Memoria y Contexto"
+          >
+            <Brain className="h-4 w-4" />
+          </button>
+
+          {/* BOTÓN 5 (ÍCONO): LIMPIAR CHAT ACTUAL */}
+          {activeTab === "conversar" && (
             <button
-              onClick={onRequestReport}
-              className="bg-[#6D856B] hover:bg-[#5A7358] text-white text-[11px] sm:text-xs font-bold px-3 sm:px-4 py-1.5 sm:py-2 rounded-full shadow-xs transition flex items-center gap-1.5 cursor-pointer shrink-0"
-              title="Pedir Reporte con Consejos (Datos del día vs Aspecto Psicológico)"
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("mente-alfa:clear-chat"))}
+              className="h-9 w-9 rounded-xl bg-white hover:bg-rose-50 text-[#7A7167] hover:text-rose-600 border border-[#EAE2D6] flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs"
+              title="Limpiar mensajes de la ventana actual"
+              aria-label="Limpiar ventana"
             >
-              <BarChart3 className="h-3.5 w-3.5 text-amber-200" />
-              <span className="hidden sm:inline">Pedir Reporte</span>
-              <span className="sm:hidden">Reporte</span>
+              <Eraser className="h-4 w-4" />
             </button>
           )}
 
+          {/* BOTÓN 6 (ÍCONO): CONFIGURACIÓN */}
           <button
+            type="button"
             onClick={() => onTabChange("configuracion")}
-            className={`p-1.5 sm:p-2 rounded-full transition cursor-pointer ${
+            className={`h-9 w-9 rounded-xl transition flex items-center justify-center cursor-pointer shrink-0 ${
               activeTab === "configuracion"
                 ? "bg-[#EAE2D6] text-[#2D332D]"
                 : "text-[#7A7167] hover:bg-[#EAE2D6]/50 hover:text-[#2D332D]"
             }`}
-            title={`Configuración de ${profile.userName}`}
+            title={`Ajustes (${profile.userName})`}
+            aria-label="Ajustes"
           >
             <Settings className="h-4 w-4" />
           </button>

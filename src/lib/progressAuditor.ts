@@ -17,6 +17,10 @@ import {
   RamaTematica,
   TipoObjetivo,
 } from "../types";
+import {
+  getLocalTucumanIsoDate,
+  getLocalTucumanTime,
+} from "./dateTimeUtils";
 
 export interface PlantillaRasgoOficial {
   codigo: CodigoRasgo;
@@ -216,11 +220,9 @@ export function clasificarFranjaHoraria(isoDateStr?: string): {
   labelFranja: string;
 } {
   const d = isoDateStr ? new Date(isoDateStr) : new Date();
-  const hours = d.getHours();
-  const minutes = d.getMinutes();
+  const { hours, minutes, horaExacta } = getLocalTucumanTime(d);
   const totalMinutes = hours * 60 + minutes;
-  const horaExacta = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-  const dateKey = d.toISOString().split("T")[0];
+  const dateKey = getLocalTucumanIsoDate(d);
 
   if (totalMinutes >= 6 * 60 + 30 && totalMinutes < 7 * 60 + 30) {
     return { horaExacta, dateKey, franja: "06:45_arranque", labelFranja: "06:45 AM · Arranque Matutino & Audio Horus" };
@@ -326,26 +328,30 @@ export function generarAuditoriaComoVamos(
   memories: Memory[] = [],
   strategies: Strategy[] = []
 ): AuditoriaComoVamos {
-  const hoyIso = new Date().toISOString().split("T")[0];
+  const hoyIso = getLocalTucumanIsoDate();
   const hace7DiasMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
-  const ultimos7DiasKeys: string[] = [];
-  for (let i = 0; i < 7; i++) {
+  // Días pasados completados para auditar silencios operativos (del día 1 atrás hasta el 7 atrás)
+  // IMPORTANTE: HOY nunca se incluye en días sin reportes porque la jornada está en curso.
+  const ultimosDiasCompletadosKeys: string[] = [];
+  for (let i = 1; i <= 7; i++) {
     const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
-    ultimos7DiasKeys.push(d.toISOString().split("T")[0]);
+    ultimosDiasCompletadosKeys.push(getLocalTucumanIsoDate(d));
   }
 
   const conteoPorDia = new Map<string, number>();
-  ultimos7DiasKeys.forEach((k) => conteoPorDia.set(k, 0));
+  ultimosDiasCompletadosKeys.forEach((k) => conteoPorDia.set(k, 0));
+  conteoPorDia.set(hoyIso, 0);
 
   const logsRecientes = (logs || []).filter((l) => new Date(l.createdAt).getTime() >= hace7DiasMs);
   for (const log of logsRecientes) {
-    const { dateKey } = clasificarFranjaHoraria(log.createdAt);
-    conteoPorDia.set(dateKey, (conteoPorDia.get(dateKey) || 0) + 1);
+    const dKey = log.dateKey || getLocalTucumanIsoDate(log.createdAt);
+    conteoPorDia.set(dKey, (conteoPorDia.get(dKey) || 0) + 1);
   }
 
   const reportesHoyCount = conteoPorDia.get(hoyIso) || 0;
-  const diasSinReportesUltimos7d = ultimos7DiasKeys.filter((k) => (conteoPorDia.get(k) || 0) === 0);
+  // Solo días pasados completados que verdaderamente tuvieron 0 reportes
+  const diasSinReportesUltimos7d = ultimosDiasCompletadosKeys.filter((k) => (conteoPorDia.get(k) || 0) === 0);
   const promedioReportesPorDiaUltimos7d = Number((logsRecientes.length / 7).toFixed(1));
 
   const ordenFranjas: Array<{ franja: FranjaOperativa; label: string }> = [
@@ -359,7 +365,7 @@ export function generarAuditoriaComoVamos(
 
   const logsHoy = logsRecientes.filter((l) => clasificarFranjaHoraria(l.createdAt).dateKey === hoyIso);
   const franjasReportadasHoy = new Set(logsHoy.map((l) => l.franja || clasificarFranjaHoraria(l.createdAt).franja));
-  const horaActual = new Date().getHours();
+  const horaActual = getLocalTucumanTime().hours;
   const franjasCiegasHoy: string[] = [];
   if (horaActual >= 8 && !franjasReportadasHoy.has("06:45_arranque")) {
     franjasCiegasHoy.push("Sin reporte de Arranque 6:45 AM hoy");

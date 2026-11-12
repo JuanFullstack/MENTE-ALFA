@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { 
   Send, 
   Plus, 
@@ -18,6 +18,10 @@ import {
   CheckCircle2,
   Menu,
   ChevronLeft,
+  ChevronUp,
+  ChevronDown,
+  Maximize2,
+  Minimize2,
   SlidersHorizontal,
   Target,
   ShieldCheck,
@@ -53,7 +57,9 @@ import {
   AnalysisMetadata,
   DimensionalAxis,
   ContextEvolutionReport,
-  ObjetivoEstructurado
+  ObjetivoEstructurado,
+  ChatChannel,
+  DesgloseResumenSesion
 } from "../types";
 import { UserProfile, ZenDB, construirArbolDesdeDatos } from "../lib/storage";
 import {
@@ -85,7 +91,16 @@ import {
   extraerReporteOperativo,
   ReporteOperativoDesglose,
   compilarCargasDelDiaSeparadas,
+  verificarSiEsMetodoNuevo,
 } from "../lib/reportExtractor";
+import {
+  getLocalTucumanIsoDate,
+  getLocalTucumanTime,
+  getLocalTucumanFullDescription,
+  getTelemetriaTemporalCompleta,
+  sincronizarLogsConMensajesChatA,
+  compilarHistorialCompletoCargas,
+} from "../lib/dateTimeUtils";
 import { 
   upsertConversacionSummaryPB, 
   deleteConversacionPB,
@@ -94,6 +109,9 @@ import {
   createEstrategiaPB,
   createMemoriaPB
 } from "../services/pocketbaseService";
+
+export const CONV_CARGA_DIARIA_ID = "conv-canal-cargas-diarias";
+export const CONV_CONSULTAS_DEFAULT_ID = "conv-canal-consultas-principal";
 
 interface ChatViewProps {
   conversations: Conversation[];
@@ -107,6 +125,8 @@ interface ChatViewProps {
   dailyReports: DailyReport[];
   objetivosEstructurados?: ObjetivoEstructurado[];
   profile: UserProfile;
+  activeChatChannel?: ChatChannel;
+  onChangeChatChannel?: (channel: ChatChannel) => void;
   activeConversationId: string;
   onUpdateConversations: (convs: Conversation[]) => void;
   onUpdateMessages: (msgs: Message[]) => void;
@@ -114,6 +134,9 @@ interface ChatViewProps {
   onUpdateCurrentState: (state: CurrentState) => void;
   onUpdateDecisions: (decs: Decision[]) => void;
   onUpdateStrategies: (strats: Strategy[]) => void;
+  onUpdatePatterns?: (pats: Pattern[]) => void;
+  onSaveNewStrategy?: (strat: Strategy) => void;
+  onSaveNewPattern?: (pat: Pattern) => void;
   onSetActiveConvId: (id: string) => void;
   onOpenQuickLog?: () => void;
   onOpenAddMemory?: () => void;
@@ -135,6 +158,8 @@ export default function ChatView({
   dailyReports,
   objetivosEstructurados = [],
   profile,
+  activeChatChannel = "carga_datos",
+  onChangeChatChannel,
   activeConversationId,
   onUpdateConversations,
   onUpdateMessages,
@@ -142,6 +167,9 @@ export default function ChatView({
   onUpdateCurrentState,
   onUpdateDecisions,
   onUpdateStrategies,
+  onUpdatePatterns,
+  onSaveNewStrategy,
+  onSaveNewPattern,
   onSetActiveConvId,
   onOpenQuickLog,
   onOpenAddMemory,
@@ -231,14 +259,117 @@ export default function ChatView({
   };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Active conversation object
-  const activeConv = conversations.find((c) => c.id === activeConversationId) || conversations[0];
+  // Estado para ocultar/mostrar el sub-encabezado en mobile y ahorrar espacio vertical
+  const [isSubHeaderHidden, setIsSubHeaderHidden] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("mente_alfa_subheader_hidden") === "true";
+    } catch {
+      return false;
+    }
+  });
 
-  // Filter messages belonging to the current conversation
+  const toggleSubHeader = () => {
+    setIsSubHeaderHidden((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("mente_alfa_subheader_hidden", String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
+
+  // Estado para expandir aún más la caja de escritura cuando el usuario edita textos largos
+  const [isInputExpanded, setIsInputExpanded] = useState<boolean>(false);
+
+  // Auto-ajuste dinámico de altura del textarea en ambos chats (Chat A y Chat B)
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const maxH = isInputExpanded ? 300 : 165;
+    const minH = isInputExpanded ? 130 : 52;
+    const targetH = Math.max(minH, Math.min(el.scrollHeight, maxH));
+    el.style.height = `${targetH}px`;
+  }, [inputText, isInputExpanded, activeChatChannel]);
+
+  const esCanalCargaDatos = activeChatChannel === "carga_datos";
+
+  // Separación estricta de conversaciones entre Chat A (Carga Diaria) y Chat B (Consultas)
+  const conversacionesCanal = conversations.filter((c) =>
+    esCanalCargaDatos
+      ? c.channel === "carga_datos" || c.id === CONV_CARGA_DIARIA_ID
+      : c.channel !== "carga_datos" && c.id !== CONV_CARGA_DIARIA_ID
+  );
+
+  // Asegurar que exista la conversación del canal activo
+  useEffect(() => {
+    if (esCanalCargaDatos) {
+      const existeCarga = conversations.some(
+        (c) => c.id === CONV_CARGA_DIARIA_ID || c.channel === "carga_datos"
+      );
+      if (!existeCarga) {
+        const convCarga: Conversation = {
+          id: CONV_CARGA_DIARIA_ID,
+          title: "📥 Bitácora de Cargas Diarias (BD)",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          summary: null,
+          isSummarized: false,
+          channel: "carga_datos",
+        };
+        onUpdateConversations([convCarga, ...conversations]);
+        onSetActiveConvId(CONV_CARGA_DIARIA_ID);
+      } else if (
+        activeConversationId !== CONV_CARGA_DIARIA_ID &&
+        !conversations.find((c) => c.id === activeConversationId && c.channel === "carga_datos")
+      ) {
+        const target =
+          conversations.find((c) => c.id === CONV_CARGA_DIARIA_ID || c.channel === "carga_datos") ||
+          conversations[0];
+        if (target) onSetActiveConvId(target.id);
+      }
+    } else {
+      const convsConsulta = conversations.filter(
+        (c) => c.id !== CONV_CARGA_DIARIA_ID && c.channel !== "carga_datos"
+      );
+      if (convsConsulta.length === 0) {
+        const convCons: Conversation = {
+          id: CONV_CONSULTAS_DEFAULT_ID,
+          title: "💬 Sesión de Consultas",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          summary: null,
+          isSummarized: false,
+          channel: "consultas",
+        };
+        onUpdateConversations([convCons, ...conversations]);
+        onSetActiveConvId(CONV_CONSULTAS_DEFAULT_ID);
+      } else if (
+        activeConversationId === CONV_CARGA_DIARIA_ID ||
+        !convsConsulta.some((c) => c.id === activeConversationId)
+      ) {
+        onSetActiveConvId(convsConsulta[0].id);
+      }
+    }
+  }, [activeChatChannel, conversations.length]);
+
+  // Active conversation object según el canal activo
+  const activeConv =
+    conversacionesCanal.find((c) => c.id === activeConversationId) ||
+    conversacionesCanal[0] ||
+    conversations[0];
+
+  const effectiveConvId =
+    activeConv?.id ||
+    (esCanalCargaDatos ? CONV_CARGA_DIARIA_ID : CONV_CONSULTAS_DEFAULT_ID);
+
+  // Filter messages belonging strictly to the active channel's conversation
   const currentMessages = messages.filter(
-    (m) => m.conversationId === (activeConv?.id || activeConversationId)
+    (m) => m.conversationId === effectiveConvId
   );
 
   // Auto-scroll on new message
@@ -249,7 +380,7 @@ export default function ChatView({
   // Recopilar resúmenes de conversaciones previas para la memoria continua de la IA
   const getPreviousSummaries = () => {
     return conversations
-      .filter((c) => c.id !== activeConversationId && c.isSummarized && c.summary)
+      .filter((c) => c.id !== effectiveConvId && c.isSummarized && c.summary)
       .map((c) => ({
         id: c.id,
         title: c.title,
@@ -258,15 +389,16 @@ export default function ChatView({
       }));
   };
 
-  // 1. [CREATE] Nueva conversación (Limpia sin mensajes prefabricados)
+  // 1. [CREATE] Nueva conversación en el canal activo
   const handleCreateNewConversation = () => {
     const newConv: Conversation = {
       id: `conv-${Date.now()}`,
-      title: "Nueva reflexión",
+      title: esCanalCargaDatos ? "Nueva carga diaria" : "Nueva consulta",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       summary: null,
       isSummarized: false,
+      channel: activeChatChannel,
     };
 
     onUpdateConversations([newConv, ...conversations]);
@@ -373,16 +505,18 @@ export default function ChatView({
     if (currentMessages.length === 0) return;
     if (!window.confirm("¿Deseas limpiar todos los mensajes de esta ventana y reiniciar la charla? Se borrarán del almacenamiento local.")) return;
 
-    const remainingMsgs = messages.filter((m) => m.conversationId !== activeConversationId);
+    const remainingMsgs = messages.filter((m) => m.conversationId !== effectiveConvId);
     onUpdateMessages(remainingMsgs);
     ZenDB.setMessages(remainingMsgs);
   };
 
-  // 5. [RESUMIR Y SUBIR] Generar resumen estructurado con horarios, franja, estado, métodos y efectividad
+  // 5. [GUARDAR RESUMEN DE SESIÓN EN CHAT B — CONSULTAS]
+  // Desglosa la sesión (patrones, respuestas, emociones, autoimagen/primitivas, métodos),
+  // envía todo a la Base de Datos y responde en el chat confirmando qué hizo.
   const handleSummarizeAndUpload = async () => {
     const userMsgs = currentMessages.filter((m) => m.sender === "user");
     if (userMsgs.length === 0) {
-      setErrorMsg("Escribe algún mensaje antes de generar un resumen de la sesión.");
+      setErrorMsg("Escribe algún mensaje en la consulta antes de guardar el resumen de sesión.");
       setTimeout(() => setErrorMsg(null), 3000);
       return;
     }
@@ -392,96 +526,24 @@ export default function ChatView({
     setSummaryToast(null);
 
     const timeData = computeTimeSlotAndRange(currentMessages);
-    const recentLog = logs && logs.length > 0 ? logs[0] : null;
-
+    const infoHora = clasificarFranjaHoraria();
     const textToSummarize = currentMessages
       .map((m) => `${m.sender === "user" ? profile.userName : profile.companionName}: ${m.text}`)
       .join("\n");
 
-    const prompt = `Actúa como el motor analítico de memoria evolutiva y síntesis de alto rendimiento para ${profile.userName}.
-
-PARADIGMA FUNDAMENTAL DEL ANÁLISIS:
-Tu análisis DEBE seguir estrictamente el flujo:
-HISTORIA → CONTEXTO → EVENTOS → ESTADOS → TRANSICIONES → PATRONES → INTERPRETACIÓN → CONCLUSIÓN
-
-REGLAS CRÍTICAS OBLIGATORIAS:
-1. NUNCA ANALICES UN ESTADO AISLADO DEL CONTEXTO:
-   Conserva la cadena causal real: CUÁNDO → DÓNDE → QUÉ PASÓ → QUÉ PENSÓ → QUÉ SINTIÓ → QUÉ HIZO → QUÉ RESULTÓ.
-2. LÍNEA TEMPORAL Y RANGO HORARIO REAL:
-   Identifica si es un relato del pasado (precisando fecha y rango de horas de esa experiencia, ej: Sábado 15/08, 22:30–03:40) o una sesión en vivo. Desglosa los hitos en orden cronológico real.
-3. DIFERENCIAR ESTRICTAMENTE HECHO DE INTERPRETACIÓN:
-   - HECHO: Lo que ocurrió objetivamente en el mundo real.
-   - INTERPRETACIÓN: Lo que ${profile.userName} pensó/sintió sobre el hecho o hipótesis analítica. ¡PROHIBIDO afirmar una interpretación como si fuera un hecho objetivo!
-4. SISTEMA DE DIMENSIONES (Ejes opuestos de análisis interno):
-   - EJE 1 — Seguridad personal: Confianza, Autoestima independiente vs Inseguridad, Autoestima dependiente, Dudar constantemente.
-   - EJE 2 — Libertad / espontaneidad: Autenticidad, Espontaneidad/desinhibición, Aceptar escenarios vs Forzar/condicionar, Perfección rígida, Control absoluto.
-   - EJE 3 — Regulación emocional: Inteligencia emocional, Resiliencia, Paciencia vs Reacciones explosivas, Ansiedad/nerviosismo, Acelerado ("todo ya").
-   - EJE 4 — Relaciones / interacción: Interacción abierta, Empatía, Humor vs Temor a interacción social, Victimización, Preocupación por rechazo.
-5. REGLA MAESTRA DE CONTEXTO LIBRE:
-   Las categorías son herramientas, no límites. Si una historia contiene información relevante, anécdotas o detalles que no encajan en una categoría, consérvala en ## CONTEXTO LIBRE. NUNCA deformar, omitir o forzar información para encajarla.
-
-ESTRUCTURA DE SALIDA OBLIGATORIA (Utiliza estos encabezados exactos en Markdown):
-
-## CONTEXTO
-- Fecha: [Fecha del suceso/historia narrada o fecha actual]
-- Rango horario: [Horario real del suceso, ej: 22:30–03:40, o de la sesión]
-- Duración aproximada: [Tiempo transcurrido]
-- Lugar / entorno: [Entorno físico y social donde ocurrió]
-- Situación: [Qué estaba sucediendo]
-- Personas relevantes: [Personas involucradas o presentes]
-- Actividad principal: [Qué se estaba haciendo]
-- Contexto previo: [Qué pasó antes si se menciona]
-- Contexto posterior: [Qué pasó después si se menciona]
-
-## HISTORIA
-[Reconstrucción narrativa completa, comprimida y cronológica de qué ocurrió, respetando la secuencia temporal de los acontecimientos y vivencias de ${profile.userName}, dejando en claro todas las partes importantes sin etiquetas forzadas.]
-
-## LÍNEA TEMPORAL
-- [hora/periodo] → [evento/hecho] → [reacción / estado]
-- [hora/periodo] → [evento/hecho] → [reacción / estado]
-(Continúa con la secuencia cronológica observada)
-
-## ESTADOS DETECTADOS
-
-### POSITIVOS (+)
-- [Dimensión positiva] ↑ (evidencia observada / intensidad)
-
-### NEGATIVOS (-)
-- [Dimensión negativa] ↑ (evidencia observada / intensidad)
-
-### NO CLASIFICADO
-- [Estado, conducta o fenómeno relevante que no encaja en dimensiones predefinidas]
-
-## CAMBIOS DE ESTADO
-[Qué provocó que un estado aumentara, disminuyera o cambiara. Formato: detonante → interpretación → cambio de estado]
-
-## PATRONES
-- [Situación] → [reacción automática] → [consecuencia]
-- [Detonante recurrente] → [estado]
-
-## INTERPRETACIÓN
-- HECHO: [Hecho objetivo observable]
-- INTERPRETACIÓN: [Qué interpretó ${profile.userName}]
-- HIPÓTESIS: [Hipótesis analítica de la IA diferenciada claramente de los hechos]
-
-## PRINCIPIOS / REGLAS DESCUBIERTAS
-- [Regla, directriz o aprendizaje extraído de la experiencia]
-
-## DECISIONES / PROTOCOLOS
-- [Decisiones tomadas o métodos/protocolos conscientemente establecidos; si no hubo ninguno: "Ninguno establecido"]
-
-## PENDIENTES
-- [Aspectos que quedan por observar, comprobar o continuar]
-
-## CONCLUSIÓN DE ESTADO
-[Máximo 3–5 líneas: dónde está actualmente la situación, qué cambió y estado al finalizar la interacción.]
-
-## CONTEXTO LIBRE
-[Información importante, matices o anécdotas que no pertenecen a ninguna categoría anterior.]
-
----
-CONVERSACIÓN / VIVENCIA A ANALIZAR:
-${textToSummarize}`;
+    let desgloseSesion: DesgloseResumenSesion = {
+      fechaHora: `${infoHora.dateKey} · ${infoHora.horaExacta} hs (${infoHora.labelFranja})`,
+      temaPrincipal: userMsgs[0]?.text.slice(0, 90) || "Sesión de consulta",
+      emocionesDetectadas: ["Reflexión / Análisis"],
+      autoimagenYSensacionesPrimitivas: "Evaluación del estado actual sin reactividad externa",
+      detonanteContexto: `Consulta en ${timeData.timeSlot}`,
+      respuestaUsuario: userMsgs[userMsgs.length - 1]?.text.slice(0, 120) || "Búsqueda de claridad contextual",
+      controloEmocion: "si",
+      patronesIdentificados: [`Contexto (${infoHora.horaExacta} hs) → Análisis de detonante y respuesta`],
+      metodoReguladorDetectado: "Ninguno específico",
+      esMetodoNuevo: false,
+      guardadoEnBD: true,
+    };
 
     let summaryText = "";
 
@@ -489,85 +551,129 @@ ${textToSummarize}`;
       const groqKey = getStoredGroqApiKey();
       const groqModel = getStoredGroqModel();
 
-      // 1. Priorizar llamada directa con Groq para respuesta inmediata con nuevo prompt
       if (groqKey) {
         try {
-          summaryText = await chatWithGroq(
+          const promptJson = `Analiza y desglosa esta sesión de consulta de ${profile.userName} para guardarla en la Base de Datos.
+Extrae estrictamente lo conversado en la sesión (NO inventes cosas de otros días):
+
+CONVERSACIÓN:
+${textToSummarize}
+
+Responde ÚNICAMENTE con un objeto JSON válido con esta estructura:
+{
+  "temaPrincipal": "De qué trató la consulta en 1 frase clara",
+  "emocionesDetectadas": ["Emoción 1", "Emoción 2"],
+  "autoimagenYSensacionesPrimitivas": "Cómo intervino la autoimagen o sensaciones primitivas (aceptación/rechazo) o 'No aplica'",
+  "detonanteContexto": "Contexto (lugar, hora, actividad, tema difícil, algo nuevo, respuesta de otros, cansancio real)",
+  "respuestaUsuario": "Cómo reaccionó o qué conclusión/acción tomó Juan",
+  "controloEmocion": "si",
+  "patronesIdentificados": ["Patrón 1: Contexto -> Emoción -> Respuesta"],
+  "metodoReguladorDetectado": "Método mencionado (ej. Meditación, Yo Robot, otro nuevo) o 'Ninguno específico'",
+  "resumenNarrativo": "Resumen ejecutivo de 3 a 4 líneas de lo analizado y acordado en la sesión"
+}`;
+
+          const rawJson = await chatWithGroq(
             [
-              { role: "system", content: "Eres un sintetizador y analista personal. Escribes resúmenes narrativos claros, profundos y sin categorizaciones forzadas." },
-              { role: "user", content: prompt },
+              {
+                role: "system",
+                content:
+                  "Eres el motor de desglose de sesiones hacia Base de Datos. Identificas patrones, respuestas, emociones, detonantes y métodos sin inventar datos. Responde solo JSON válido.",
+              },
+              { role: "user", content: promptJson },
             ],
-            { apiKey: groqKey, model: groqModel, temperature: 0.2, max_tokens: 1500 }
+            { apiKey: groqKey, model: groqModel, temperature: 0.15, max_tokens: 700, jsonMode: true }
           );
+
+          const parsed = JSON.parse(rawJson);
+          if (parsed && parsed.temaPrincipal) {
+            const met = parsed.metodoReguladorDetectado || "Ninguno específico";
+            const esNuevo = verificarSiEsMetodoNuevo(met, strategies);
+            desgloseSesion = {
+              fechaHora: `${infoHora.dateKey} · ${infoHora.horaExacta} hs (${infoHora.labelFranja})`,
+              temaPrincipal: parsed.temaPrincipal,
+              emocionesDetectadas: Array.isArray(parsed.emocionesDetectadas) && parsed.emocionesDetectadas.length > 0
+                ? parsed.emocionesDetectadas
+                : ["Análisis situacional"],
+              autoimagenYSensacionesPrimitivas:
+                parsed.autoimagenYSensacionesPrimitivas || "Sin activación crítica",
+              detonanteContexto: parsed.detonanteContexto || `Consulta en ${infoHora.horaExacta} hs`,
+              respuestaUsuario: parsed.respuestaUsuario || "Identificación consciente del contexto",
+              controloEmocion:
+                parsed.controloEmocion === "no" || parsed.controloEmocion === "parcial"
+                  ? parsed.controloEmocion
+                  : "si",
+              patronesIdentificados:
+                Array.isArray(parsed.patronesIdentificados) && parsed.patronesIdentificados.length > 0
+                  ? parsed.patronesIdentificados
+                  : [`${parsed.detonanteContexto || "Contexto"} → ${parsed.respuestaUsuario || "Respuesta"}`],
+              metodoReguladorDetectado: met,
+              esMetodoNuevo: esNuevo,
+              guardadoEnBD: true,
+            };
+            summaryText = parsed.resumenNarrativo || `${parsed.temaPrincipal}. Patrones: ${desgloseSesion.patronesIdentificados.join("; ")}`;
+          }
         } catch (groqErr) {
-          console.warn("Fallo directo en Groq, intentando endpoint backend...", groqErr);
-        }
-      }
-
-      // 2. Fallback a endpoint de servidor si es necesario
-      if (!summaryText) {
-        try {
-          const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (groqKey) {
-            headers["x-groq-api-key"] = groqKey;
-            headers["x-groq-model"] = groqModel;
-          }
-
-          const srvRes = await fetch("/api/summarize", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              messages: currentMessages,
-              timeSlot: timeData.timeSlot,
-              timeRange: timeData.timeRange,
-              recentLog,
-              userName: profile.userName,
-              customPrompt: prompt,
-            }),
-          });
-
-          if (srvRes.ok) {
-            const srvData = await srvRes.json();
-            if (srvData && srvData.summary) {
-              summaryText = srvData.summary;
-            }
-          }
-        } catch (_err) {
-          // Fallback
+          console.warn("Usando desglose determinista de sesión:", groqErr);
         }
       }
 
       if (!summaryText) {
-        summaryText = `RESUMEN GENERAL:\nSesión con ${userMsgs.length} intervenciones de ${profile.userName}.\n\nDESGLOSE DE LO IDENTIFICADO:\n- Temporalidad: ${timeData.timeRange} (${timeData.timeSlot})\n- Rasgos de mentalidad: Procesados durante la interacción\n- Métodos o protocolos: Ninguno / Relato libre\n- Desenlace / Aprendizaje: Registrado para seguimiento.`;
+        summaryText = `Sesión de consulta (${desgloseSesion.fechaHora}): ${desgloseSesion.temaPrincipal}. Emociones: ${desgloseSesion.emocionesDetectadas.join(", ")}. Patrón: ${desgloseSesion.patronesIdentificados.join(" | ")}.`;
       }
 
-      // 3. Extraer los 4 Ejes Dimensionales y Metadata Evolutiva
-      let analysisMetadata: AnalysisMetadata | null = null;
-      try {
-        const extracted = await extractDimensionalAxesGroq(summaryText, profile.userName);
-        if (extracted && extracted.axes) {
-          analysisMetadata = {
-            axes: extracted.axes,
-            dominantPattern: extracted.dominantPattern,
-            evolutionVsPrevious: extracted.evolutionVsPrevious,
-            contradictions: extracted.contradictions,
-            novelInsights: extracted.novelInsights,
-            sourceType: "derivado",
-            processedAt: new Date().toISOString(),
-          };
-        }
-      } catch (dimErr) {
-        console.warn("No se pudieron extraer ejes dimensionales en cliente:", dimErr);
+      // 1. Si hay un método nuevo detectado en la sesión, guardarlo como Método en la Base de Datos
+      if (
+        desgloseSesion.esMetodoNuevo &&
+        desgloseSesion.metodoReguladorDetectado &&
+        desgloseSesion.metodoReguladorDetectado !== "Ninguno específico"
+      ) {
+        const nuevoMet: Strategy = {
+          id: `strat-ses-${Date.now()}`,
+          name: desgloseSesion.metodoReguladorDetectado,
+          situation: desgloseSesion.detonanteContexto,
+          result: desgloseSesion.respuestaUsuario,
+          effectiveness: "alta",
+          status: "recomendada",
+          resultType: "positivo",
+          reason: `Método regulador identificado y guardado desde Resumen de Sesión (${desgloseSesion.fechaHora}).`,
+          createdAt: new Date().toISOString(),
+          rama_id: "habitos",
+        };
+        onSaveNewStrategy?.(nuevoMet);
       }
 
-      const currentTitle = activeConv?.title || "Reflexión";
+      // 2. Guardar los patrones identificados en la Base de Datos
+      for (const patTexto of desgloseSesion.patronesIdentificados) {
+        const nuevoPat: Pattern = {
+          id: `pat-ses-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+          type: "asociación",
+          description: `[Sesión ${infoHora.dateKey} ${infoHora.horaExacta} hs] ${patTexto} (Emociones: ${desgloseSesion.emocionesDetectadas.join(", ")} | Control: ${desgloseSesion.controloEmocion.toUpperCase()})`,
+          createdAt: new Date().toISOString(),
+        };
+        onSaveNewPattern?.(nuevoPat);
+      }
+
+      // 3. Guardar memoria sintetizada de la sesión en Base de Datos
+      const nuevaMemoriaSesion: Memory = {
+        id: `mem-ses-${Date.now()}`,
+        text: `[Resumen Sesión · ${desgloseSesion.fechaHora}] Tema: ${desgloseSesion.temaPrincipal} | Contexto/Detonante: ${desgloseSesion.detonanteContexto} | Emociones: ${desgloseSesion.emocionesDetectadas.join(", ")} | Respuesta: ${desgloseSesion.respuestaUsuario} | Método: ${desgloseSesion.metodoReguladorDetectado || "Ninguno"}`,
+        category: "experiencias",
+        createdAt: new Date().toISOString(),
+        isApproved: true,
+        summary: summaryText,
+      };
+      const nuevasMems = [nuevaMemoriaSesion, ...memories];
+      onUpdateMemories(nuevasMems);
+      await createMemoriaPB(nuevaMemoriaSesion);
+
+      // 4. Actualizar la conversación y subir a PocketBase
+      const currentTitle = activeConv?.title || "Sesión de Consulta";
       const updatedConvs = conversations.map((c) => {
-        if (c.id === activeConversationId) {
+        if (c.id === effectiveConvId) {
           return {
             ...c,
             summary: summaryText,
             isSummarized: true,
-            analysisMetadata,
             updatedAt: new Date().toISOString(),
           };
         }
@@ -576,27 +682,40 @@ ${textToSummarize}`;
       onUpdateConversations(updatedConvs);
       ZenDB.setConversations(updatedConvs);
 
-      const pbResult = await upsertConversacionSummaryPB(activeConversationId, currentTitle, summaryText, analysisMetadata);
+      const pbResult = await upsertConversacionSummaryPB(effectiveConvId, currentTitle, summaryText, null);
 
-      setSummaryToast({
-        summary: summaryText,
-        uploaded: pbResult.success,
-        analysisMetadata,
-      });
+      // 5. Publicar mensaje de confirmación con el desglose directamente en el Chat B
+      const textoConfirmacion = `✅ Resumen de Sesión desglosado y enviado a la Base de Datos (${desgloseSesion.fechaHora}).
 
-      if (activeConv?.title === "Nueva reflexión" && userMsgs[0]) {
-        const autoTitle = userMsgs[0].text.slice(0, 32) + (userMsgs[0].text.length > 32 ? "..." : "");
-        const renamed = updatedConvs.map((c) => (c.id === activeConversationId ? { ...c, title: autoTitle } : c));
-        onUpdateConversations(renamed);
-        ZenDB.setConversations(renamed);
-        ZenDB.sincronizarArbolMemoria(memories, renamed, strategies);
-      } else {
-        ZenDB.sincronizarArbolMemoria(memories, updatedConvs, strategies);
-      }
+• Tema analizado: ${desgloseSesion.temaPrincipal}
+• Contexto / Detonante: ${desgloseSesion.detonanteContexto}
+• Emociones identificadas: ${desgloseSesion.emocionesDetectadas.join(", ")}
+• Autoimagen y Sensaciones Primitivas: ${desgloseSesion.autoimagenYSensacionesPrimitivas}
+• Respuesta y Control Emocional: ${desgloseSesion.respuestaUsuario} (Control: ${desgloseSesion.controloEmocion.toUpperCase()})
+• Patrones guardados en BD: ${desgloseSesion.patronesIdentificados.join(" | ")}
+• Método regulador: ${desgloseSesion.metodoReguladorDetectado || "Ninguno específico"}${
+        desgloseSesion.esMetodoNuevo ? " (✨ Guardado como NUEVO MÉTODO en tu catálogo)" : ""
+      }`;
 
+      const msgConfirmacionSesion: Message = {
+        id: `m-ses-${Date.now()}`,
+        conversationId: effectiveConvId,
+        sender: "assistant",
+        text: textoConfirmacion,
+        createdAt: new Date().toISOString(),
+        desgloseResumenSesion: {
+          ...desgloseSesion,
+          guardadoEnBD: pbResult.success || true,
+        },
+      };
+
+      const msgsActualizados = [...messages, msgConfirmacionSesion];
+      onUpdateMessages(msgsActualizados);
+      ZenDB.setMessages(msgsActualizados);
+      await createMensajePB(msgConfirmacionSesion);
     } catch (err: any) {
-      console.error("Error al resumir:", err);
-      setErrorMsg("Error al generar o subir el resumen. Verifica tu conexión o clave en Configuración.");
+      console.error("Error al resumir sesión:", err);
+      setErrorMsg("Error al desglosar y guardar el resumen de sesión.");
     } finally {
       setIsSummarizing(false);
     }
@@ -645,7 +764,9 @@ ${textToSummarize}`;
     }
   };
 
-  // 6. Enviar mensaje del usuario o ejecutar acción de Carga de Datos / Pedir Reporte con Consejos
+  // 6. Enviar mensaje según el Chat Activo:
+  // - CHAT A (carga_datos): Siempre desglosa previamente en las 3 Variables Clave -> Envía a la Base de Datos -> Responde confirmando el envío y mostrando cómo lo desglosó.
+  // - CHAT B (consultas): NO envía reportes diarios a la Base de Datos; evalúa suficiencia de contexto e indaga o responde sin plantillas genéricas.
   const handleSendMessage = async (
     e?: React.FormEvent,
     overrideOpts?: {
@@ -665,7 +786,7 @@ ${textToSummarize}`;
 
     const userMsg: Message = {
       id: `m-${Date.now()}`,
-      conversationId: activeConversationId,
+      conversationId: effectiveConvId,
       sender: "user",
       text: userText,
       createdAt: new Date().toISOString(),
@@ -674,10 +795,16 @@ ${textToSummarize}`;
     const updatedMessages = [...messages, userMsg];
     onUpdateMessages(updatedMessages);
 
-    if (activeConv && (activeConv.title === "Nueva reflexión" || activeConv.title.startsWith("Conversación"))) {
+    if (
+      !esCanalCargaDatos &&
+      activeConv &&
+      (activeConv.title === "Nueva reflexión" ||
+        activeConv.title === "Nueva consulta" ||
+        activeConv.title.startsWith("Conversación"))
+    ) {
       const summaryTitle = userText.slice(0, 36) + (userText.length > 36 ? "..." : "");
       const updatedConvs = conversations.map((c) =>
-        c.id === activeConversationId
+        c.id === effectiveConvId
           ? { ...c, title: summaryTitle, updatedAt: new Date().toISOString() }
           : c
       );
@@ -687,45 +814,81 @@ ${textToSummarize}`;
     setIsLoading(true);
 
     try {
+      const infoHora = clasificarFranjaHoraria();
+      const horaActualTexto = `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
+
+      // =====================================================================
+      // FLUJO 1: CHAT A — CARGA DIARIA DE REPORTES (SIEMPRE VA A LA BASE DE DATOS)
+      // =====================================================================
+      if (esCanalCargaDatos || overrideOpts?.forcedMode === "carga_datos_momento") {
+        // Paso 1: Desglosar previamente el reporte en las 3 Variables Clave + Contexto + Métodos
+        const reporteOperativo = await extraerReporteOperativo(
+          userText,
+          horaActualTexto,
+          objetivosEstructurados,
+          true,
+          strategies
+        );
+
+        // Paso 2: Enviar siempre el registro desglosado a la Base de Datos
+        onSaveQuickLog?.(reporteOperativo.log);
+
+        // Si detectó un nuevo método regulador, guardarlo automáticamente como Método en la BD
+        if (reporteOperativo.nuevoMetodoParaGuardar) {
+          onSaveNewStrategy?.(reporteOperativo.nuevoMetodoParaGuardar);
+        }
+
+        // Si detectó un patrón o factor contextual, registrarlo en Patrones de la BD
+        if (
+          reporteOperativo.desglose.seccionesInformadas?.patronObservado ||
+          reporteOperativo.desglose.patronesContexto.factoresContextuales.length > 0
+        ) {
+          const descPatron =
+            reporteOperativo.desglose.patronesContexto.patronDetectado ||
+            reporteOperativo.desglose.camposExtraidosReales?.find((c) => c.categoria === "patron_observado")?.valor ||
+            userText;
+          onSaveNewPattern?.({
+            id: `pat-carga-${Date.now()}`,
+            type: "dato observado",
+            description: descPatron,
+            createdAt: new Date().toISOString(),
+          });
+        }
+
+        // Paso 3: Responder confirmando el envío a la Base de Datos y mostrando cómo desglosó el envío
+        const aiConfirmMsg: Message = {
+          id: `m-${Date.now() + 1}`,
+          conversationId: effectiveConvId,
+          sender: "assistant",
+          text: reporteOperativo.mensajeConfirmacionBD,
+          createdAt: new Date().toISOString(),
+          energyLevel: reporteOperativo.desglose.energia,
+          desgloseReporte: reporteOperativo.desglose,
+        };
+
+        const finalMsgs = [...updatedMessages, aiConfirmMsg];
+        onUpdateMessages(finalMsgs);
+        createMensajePB(userMsg);
+        createMensajePB(aiConfirmMsg);
+        return;
+      }
+
+      // =====================================================================
+      // FLUJO 2: CHAT B — CONSULTAS (NO GUARDA EN BD A LA PRIMERA)
+      // =====================================================================
       const groqKey = getStoredGroqApiKey();
       const groqModel = getStoredGroqModel();
       const previousSummaries = getPreviousSummaries();
+      const activeThreadMsgs = updatedMessages.filter((m) => m.conversationId === effectiveConvId);
 
-      const infoHora = clasificarFranjaHoraria();
-      const horaActualTexto = `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
-      const activeThreadMsgs = updatedMessages.filter((m) => m.conversationId === activeConversationId);
+      const evalModo = evaluarModoInteraccion(userText, activeThreadMsgs);
+      const modoInteraccion: ModoInteraccionIA = overrideOpts?.forcedMode || evalModo.modo;
 
-      // Si presionó "Cargar Información", forzamos extracción separada (Datos Operativos vs Psicológico)
-      const forzarExtraccion = overrideOpts?.forcedMode === "carga_datos_momento";
-      const esSolicitudReporte = overrideOpts?.forcedMode === "reporte_con_consejos";
-
-      const reporteOperativo = await extraerReporteOperativo(
-        userText,
-        horaActualTexto,
-        objetivosEstructurados,
-        forzarExtraccion
-      );
-
-      let logsParaAuditoria = logs;
-      if (reporteOperativo.esReporte && !esSolicitudReporte) {
-        onSaveQuickLog?.(reporteOperativo.log);
-        logsParaAuditoria = [reporteOperativo.log, ...logs];
-      }
-
-      let { modo: modoInteraccion } = evaluarModoInteraccion(userText, activeThreadMsgs);
-      if (overrideOpts?.forcedMode) {
-        modoInteraccion = overrideOpts.forcedMode;
-      } else if (reporteOperativo.esReporte) {
-        modoInteraccion = "reporte_operativo_checkin";
-      }
-
-      const auditoriaObj = generarAuditoriaComoVamos(logsParaAuditoria, objetivosEstructurados, memories, strategies);
-      const resumenCargasDia = compilarCargasDelDiaSeparadas(logsParaAuditoria);
-      const auditoriaComoVamosTexto = `${resumenCargasDia}\n\n${formatearAuditoriaParaPrompt(auditoriaObj)}`;
-      const desgloseReporteTexto =
-        reporteOperativo.esReporte && !esSolicitudReporte
-          ? reporteOperativo.desgloseTexto
-          : resumenCargasDia;
+      // Sincronizar logs con mensajes del canal de cargas para nunca perder reportes
+      const logsSincronizados = sincronizarLogsConMensajesChatA(logs, updatedMessages);
+      const auditoriaObj = generarAuditoriaComoVamos(logsSincronizados, objetivosEstructurados, memories, strategies);
+      const historialCargasTexto = compilarHistorialCompletoCargas(logs, updatedMessages);
+      const auditoriaComoVamosTexto = `${historialCargasTexto}\n\n${formatearAuditoriaParaPrompt(auditoriaObj)}`;
 
       let data: any = null;
 
@@ -742,19 +905,19 @@ ${textToSummarize}`;
           body: JSON.stringify({
             messages: activeThreadMsgs,
             memories: memories.filter((m) => m.isApproved),
-            logs: logs,
-            patterns: patterns,
-            strategies: strategies,
-            currentState: currentState,
-            decisions: decisions,
-            dailyReports: dailyReports,
-            previousSummaries: previousSummaries,
+            logs: logsSincronizados,
+            patterns,
+            strategies,
+            currentState,
+            decisions,
+            dailyReports,
+            previousSummaries,
             conversations: conversations.filter((c) => c.isSummarized && c.summary),
             objetivosEstructurados,
             horaActualTexto,
             modoInteraccion,
             auditoriaComoVamosTexto,
-            desgloseReporteTexto,
+            desgloseReporteTexto: historialCargasTexto,
             baseContext: {
               userName: profile.userName,
               companionName: profile.companionName,
@@ -774,7 +937,6 @@ ${textToSummarize}`;
       }
 
       if (!data || !data.message) {
-        // Fallback directo a Groq Cloud con Arbol Jerarquico de Memoria
         const { rama: ramaActiva, tags: tagsDetectados } = detectarRamaYTags(userText, activeThreadMsgs);
 
         const arbolLocal = construirArbolDesdeDatos(
@@ -796,21 +958,16 @@ ${textToSummarize}`;
         const fichasCompactasTexto = formatearFichasInmutablesCompactas(fichasPodadas, ramaActiva);
         const hiloRecienteTexto = construirHiloActivoTexto(activeThreadMsgs, decisions, currentState, ramaActiva);
 
-        const hechoDosificadoTexto = obtenerHechoDosificadoSinRepetir(
-          activeThreadMsgs,
-          userText
-        );
-
         const systemInstruction = buildRepairedSystemPrompt({
           ramaActiva,
           tagsDetectados,
           hiloRecienteTexto,
           fichasCompactasTexto,
-          hechoDosificadoTexto,
           horaActualTexto,
           modoInteraccion,
           auditoriaComoVamosTexto,
-          desgloseReporteTexto,
+          desgloseReporteTexto: historialCargasTexto,
+          evaluacionContexto: evalModo.evaluacionContexto,
         });
 
         const convHistory = activeThreadMsgs
@@ -819,11 +976,6 @@ ${textToSummarize}`;
             role: (m.sender === "user" ? "user" : "assistant") as "user" | "assistant",
             content: m.text,
           }));
-
-        const prefillAUsar =
-          modoInteraccion === "sondeo_contexto_vago"
-            ? "<analisis_contextual>\n- Modo y especificidad: [sondeo_contexto_vago]"
-            : ASSISTANT_PREFILL_TAG;
 
         const groqResponse = await chatWithGroq(
           [
@@ -834,48 +986,44 @@ ${textToSummarize}`;
             apiKey: groqKey,
             model: groqModel,
             jsonMode: false,
-            temperature: 0.25,
+            temperature: 0.35,
             max_tokens: 900,
-            assistantPrefill: prefillAUsar,
           }
         );
 
         const { formattedMessage, tacticalAnalysis } = parseRepairedTacticalOutput(
           groqResponse,
           ramaActiva,
-          true
+          false
         );
         data = {
           message: formattedMessage,
           tacticalAnalysis,
-          energyLevel: reporteOperativo.esReporte ? reporteOperativo.desglose.energia : 7,
+          energyLevel: 7,
         };
       }
 
       const aiMsg: Message = {
         id: `m-${Date.now() + 1}`,
-        conversationId: activeConversationId,
+        conversationId: effectiveConvId,
         sender: "assistant",
-        text: data?.message || "He procesado tu mensaje con atención.",
+        text: data?.message || "He procesado tu consulta.",
         createdAt: new Date().toISOString(),
-        energyLevel: data?.energyLevel ?? (reporteOperativo.esReporte ? reporteOperativo.desglose.energia : undefined),
+        energyLevel: data?.energyLevel,
         tacticalAnalysis: data?.tacticalAnalysis,
-        desgloseReporte:
-          reporteOperativo.esReporte && !esSolicitudReporte
-            ? reporteOperativo.desglose
-            : null,
+        desgloseReporte: null,
       };
 
       onUpdateMessages([...updatedMessages, aiMsg]);
     } catch (err: any) {
       console.error("Chat error:", err);
       setErrorMsg("Error al comunicar con Groq AI. Verifica tu conexión o clave en Configuración.");
-      
+
       const fallbackAiMsg: Message = {
         id: `m-${Date.now() + 1}`,
-        conversationId: activeConversationId,
+        conversationId: effectiveConvId,
         sender: "assistant",
-        text: `Te escucho con atención, ${profile.userName}. Comprendo lo que mencionas respecto a '${userText}'. ¿Cómo te hace sentir eso en este momento?`,
+        text: `Recibí tu mensaje: "${userText}". Para darte una respuesta precisa sin asumir nada, contame brevemente qué estabas haciendo y en qué contexto surgió.`,
         createdAt: new Date().toISOString(),
       };
       onUpdateMessages([...updatedMessages, fallbackAiMsg]);
@@ -935,10 +1083,15 @@ ${textToSummarize}`;
     }
   }, [autoLoadDataTrigger]);
 
-  const hoyIso = new Date().toISOString().split("T")[0];
-  const cargasDeHoy = (logs || [])
-    .filter((l) => (l.dateKey || clasificarFranjaHoraria(l.createdAt).dateKey) === hoyIso)
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  const hoyIso = getLocalTucumanIsoDate();
+  // Mostrar primero las cargas más recientes para reflejar el estado actual y no quedarse pegado a la primera hora.
+  // Sincroniza logs con mensajes del canal de cargas para que las píldoras siempre reflejen la jornada de Tucumán.
+  const cargasDeHoy = useMemo(() => {
+    const logsSincronizados = sincronizarLogsConMensajesChatA(logs, messages);
+    return logsSincronizados
+      .filter((l) => (l.dateKey || getLocalTucumanIsoDate(l.createdAt)) === hoyIso)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [logs, messages, hoyIso]);
 
   // Aceptar sugerencia de decisión de la IA
   const handleAcceptDecision = (decisionSug: DecisionSuggestion, msgId: string) => {
@@ -1021,8 +1174,26 @@ ${textToSummarize}`;
 
   const getFormattedDate = () => {
     const d = new Date();
-    return `HOY, ${d.getDate()} DE ${d.toLocaleString("es", { month: "long" }).toUpperCase()}`;
+    const dia = d.toLocaleDateString("es-AR", { timeZone: "America/Argentina/Tucuman", day: "numeric" });
+    const mes = d.toLocaleDateString("es-AR", { timeZone: "America/Argentina/Tucuman", month: "long" }).toUpperCase();
+    return `HOY, ${dia} DE ${mes}`;
   };
+
+  // Escuchar eventos de los botones en ícono de la barra superior (TopNavbar)
+  useEffect(() => {
+    const onToggleLeft = () => setIsLeftDrawerOpen((prev) => !prev);
+    const onToggleRight = () => setIsRightDrawerOpen((prev) => !prev);
+    const onClearChat = () => handleClearCurrentWindow();
+
+    window.addEventListener("mente-alfa:toggle-left-drawer", onToggleLeft);
+    window.addEventListener("mente-alfa:toggle-right-drawer", onToggleRight);
+    window.addEventListener("mente-alfa:clear-chat", onClearChat);
+    return () => {
+      window.removeEventListener("mente-alfa:toggle-left-drawer", onToggleLeft);
+      window.removeEventListener("mente-alfa:toggle-right-drawer", onToggleRight);
+      window.removeEventListener("mente-alfa:clear-chat", onClearChat);
+    };
+  }, [effectiveConvId, messages.length]);
 
   const primaryMemory = memories[0] || {
     text: "Prefiere trabajar sin música cuando realiza tareas analíticas. Se siente más productivo por la mañana (07:00 a 12:00).",
@@ -1034,7 +1205,7 @@ ${textToSummarize}`;
     <div className="space-y-4 flex flex-col h-full">
       <div className="flex items-center justify-between pb-2 border-b border-[#EAE2D6]/60">
         <h2 className="text-[11px] font-bold text-[#A69D91] uppercase tracking-wider">
-          CONVERSACIONES
+          {esCanalCargaDatos ? "HISTORIAL CARGA DIARIA" : "SESIONES DE CONSULTA"}
         </h2>
         <button
           onClick={handleCreateNewConversation}
@@ -1047,8 +1218,8 @@ ${textToSummarize}`;
       </div>
 
       <div className="space-y-2 overflow-y-auto flex-1 pr-1">
-        {conversations.map((conv) => {
-          const isActive = conv.id === activeConversationId;
+        {conversacionesCanal.map((conv) => {
+          const isActive = conv.id === effectiveConvId;
           const msgCount = messages.filter((m) => m.conversationId === conv.id).length;
           const isEditing = editingConvId === conv.id;
 
@@ -1129,14 +1300,19 @@ ${textToSummarize}`;
                     <span className="text-[#A69D91] font-medium">
                       {msgCount} mensajes
                     </span>
-                    {conv.isSummarized ? (
+                    {esCanalCargaDatos ? (
+                      <span className="text-[9px] font-semibold text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                        <CloudUpload className="h-2.5 w-2.5 text-sky-700" />
+                        Directo a BD
+                      </span>
+                    ) : conv.isSummarized ? (
                       <span className="text-[9px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md flex items-center gap-1">
                         <BookmarkCheck className="h-2.5 w-2.5 text-emerald-600" />
-                        Resumido
+                        Resumido en BD
                       </span>
                     ) : (
                       <span className="text-[9px] text-[#A69D91] italic">
-                        Local
+                        Sin guardar en BD
                       </span>
                     )}
                   </div>
@@ -1152,7 +1328,7 @@ ${textToSummarize}`;
         className="mt-auto bg-[#F5F1E8] border border-[#EAE2D6] rounded-2xl p-3 space-y-2 cursor-pointer hover:bg-[#ECE6DA] transition group shrink-0"
       >
         <span className="text-[10px] font-bold text-[#7A7167] uppercase tracking-wider block">
-          ESTADO EMOCIONAL HOY
+          CARGA RÁPIDA CON SLIDERS
         </span>
         <div className="flex items-end justify-between h-10 px-2 pt-1">
           <div className="w-3.5 bg-[#8BA888] rounded-t-md h-4 transition-all group-hover:h-5" />
@@ -1558,81 +1734,9 @@ ${textToSummarize}`;
           ======================================================== */}
       <section className="flex-1 flex flex-col h-full overflow-hidden bg-[#FDFBF7] px-3 sm:px-6 lg:px-10 py-3 sm:py-4 max-w-4xl mx-auto w-full pb-16 md:pb-4">
         
-        {/* Top Header of Chat */}
-        <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-[#EAE2D6]/60 shrink-0 gap-2">
-          
-          <div className="flex items-center gap-2 min-w-0">
-            {/* Mobile Drawer Trigger for Conversations */}
-            <button
-              type="button"
-              onClick={() => setIsLeftDrawerOpen(true)}
-              className="lg:hidden p-1.5 rounded-xl border border-[#EAE2D6] bg-white text-[#7A7167] hover:text-[#2D332D] shadow-2xs shrink-0"
-              title="Ver conversaciones"
-            >
-              <Menu className="h-4 w-4" />
-            </button>
-
-            <div className="min-w-0">
-              <h2 className="text-xs sm:text-sm font-bold text-[#2D332D] truncate">
-                {activeConv?.title || "Reflexión activa"}
-              </h2>
-              <div className="flex items-center gap-2 text-[10px] text-[#7A7167]">
-                <span>{currentMessages.length} mensajes</span>
-                {activeConv?.isSummarized && (
-                  <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded font-medium hidden sm:inline-flex items-center gap-1">
-                    <CloudUpload className="h-2.5 w-2.5" /> En BD
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Right Header Actions (Sin repetir Cargar/Reporte que ya están arriba) */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            {/* Mobile Drawer Trigger for Memory & Patterns */}
-            <button
-              type="button"
-              onClick={() => setIsRightDrawerOpen(true)}
-              className="xl:hidden flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-[#7A7167] bg-white border border-[#EAE2D6] rounded-xl shadow-2xs"
-              title="Ver memoria de contexto"
-            >
-              <Brain className="h-3.5 w-3.5 text-[#8BA888]" />
-              <span className="hidden sm:inline">Memoria</span>
-            </button>
-
-            {/* Analizar Contexto Button */}
-            <button
-              type="button"
-              onClick={handleAnalyzeContext}
-              disabled={isAnalyzingContext}
-              className="hidden sm:flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-[11px] sm:text-xs font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition cursor-pointer disabled:opacity-50 shadow-2xs"
-              title="Analiza la trayectoria evolutiva en las 8 dimensiones"
-            >
-              {isAnalyzingContext ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-700" />
-              ) : (
-                <Compass className="h-3.5 w-3.5 text-amber-700" />
-              )}
-              <span className="hidden md:inline">Contexto</span>
-            </button>
-
-            {/* Clear Window Button */}
-            <button
-              type="button"
-              onClick={handleClearCurrentWindow}
-              disabled={currentMessages.length === 0}
-              className="flex items-center gap-1 p-1.5 sm:px-2.5 sm:py-1.5 text-[11px] sm:text-xs font-semibold text-[#7A7167] hover:text-[#B06A52] hover:bg-[#D98E73]/10 border border-[#EAE2D6] rounded-xl transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Vaciar mensajes de esta ventana"
-            >
-              <Eraser className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Limpiar</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Píldoras de momentos cargados hoy (solo se muestra si ya hay cargas hoy, sin botones repetidos) */}
+        {/* Píldoras de momentos cargados hoy (más reciente primero; muestra solo lo informado) */}
         {cargasDeHoy.length > 0 && (
-          <div className="mb-2 shrink-0 bg-[#F6F3EC] border border-[#EAE2D6] rounded-2xl px-3 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar">
+          <div className="mb-1.5 shrink-0 bg-[#F6F3EC] border border-[#EAE2D6] rounded-xl px-2.5 py-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#5A534D] shrink-0 flex items-center gap-1">
               <Clock className="h-3 w-3 text-sky-700" />
               Hoy ({cargasDeHoy.length}):
@@ -1640,7 +1744,12 @@ ${textToSummarize}`;
             <div className="flex items-center gap-1.5 overflow-x-auto">
               {cargasDeHoy.map((c) => {
                 const hora = c.horaExacta || clasificarFranjaHoraria(c.createdAt).horaExacta;
-                const actCorta = (c.actividadRealizada || c.metasEspecificas?.[0] || "Carga").slice(0, 18);
+                const etiquetaPrincipal =
+                  c.camposExtraidosReales?.[0]?.valor ||
+                  c.actividadRealizada ||
+                  c.metasEspecificas?.[0] ||
+                  "Registro";
+                const actCorta = etiquetaPrincipal.slice(0, 22);
                 return (
                   <span
                     key={c.id}
@@ -1649,8 +1758,16 @@ ${textToSummarize}`;
                   >
                     <strong className="text-sky-700">{hora}</strong>
                     <span className="text-[#7A7167]">·</span>
-                    <span>📦 {actCorta}</span>
-                    <span className="text-amber-700">🧠 E:{c.energy}</span>
+                    <span>{actCorta}</span>
+                    {c.energiaMencionada === true && (
+                      <span className="text-amber-700">⚡ E:{c.energy}</span>
+                    )}
+                    {typeof c.tiempoProductivoMin === "number" && c.tiempoProductivoMin > 0 && (
+                      <span className="text-emerald-700">⏱️ {c.tiempoProductivoMin}m</span>
+                    )}
+                    {typeof c.tiempoDistraidoMin === "number" && c.tiempoDistraidoMin > 0 && (
+                      <span className="text-rose-700">⚠️ {c.tiempoDistraidoMin}m</span>
+                    )}
                   </span>
                 );
               })}
@@ -1658,57 +1775,34 @@ ${textToSummarize}`;
           </div>
         )}
 
-        {/* Date separator pill */}
-        <div className="flex justify-center my-1.5 shrink-0">
-          <span className="bg-[#EAE2D6]/70 text-[#7A7167] text-[9px] sm:text-[10px] font-bold tracking-wider uppercase px-3 py-0.5 rounded-full">
-            {getFormattedDate()}
-          </span>
-        </div>
-
-        {/* Success toast after summarizing */}
-        {summaryToast && (
-          <div className="mb-2.5 p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 shadow-2xs animate-fade-in space-y-1">
-            <div className="flex items-center justify-between font-bold">
-              <span className="flex items-center gap-1.5 text-[11px] sm:text-xs">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                ¡Resumen generado y subido a PocketBase!
-              </span>
-              <button
-                onClick={() => setSummaryToast(null)}
-                className="text-emerald-700 hover:text-emerald-900 p-0.5"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            <p className="text-[10px] sm:text-[11px] text-emerald-800 leading-relaxed pl-5">
-              {summaryToast.summary}
-            </p>
-          </div>
-        )}
-
         {/* Error message toast */}
         {errorMsg && (
-          <div className="mb-2.5 p-2.5 bg-[#D98E73]/10 border border-[#D98E73]/30 rounded-2xl flex items-center gap-2 text-xs text-[#B06A52]">
+          <div className="mb-2 p-2 bg-[#D98E73]/10 border border-[#D98E73]/30 rounded-2xl flex items-center gap-2 text-xs text-[#B06A52]">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
 
         {/* Message history or Empty State */}
-        <div className="flex-1 overflow-y-auto space-y-3.5 pr-1 flex flex-col">
+        <div className="flex-1 overflow-y-auto space-y-3 pr-1 flex flex-col">
           {currentMessages.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-4 sm:p-6 space-y-2.5 my-auto animate-fade-in">
-              <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-2xl bg-[#8BA888]/15 text-[#6D856B] flex items-center justify-center shadow-2xs">
-                <Brain className="h-5 w-5 sm:h-6 sm:w-6" />
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-4 my-auto animate-fade-in">
+              <div
+                className={`h-10 w-10 rounded-2xl flex items-center justify-center shadow-2xs ${
+                  esCanalCargaDatos
+                    ? "bg-sky-900/10 text-sky-800"
+                    : "bg-[#8BA888]/15 text-[#6D856B]"
+                }`}
+              >
+                {esCanalCargaDatos ? (
+                  <Database className="h-5 w-5" />
+                ) : (
+                  <MessageSquare className="h-5 w-5" />
+                )}
               </div>
-              <div className="max-w-sm space-y-1.5">
-                <h3 className="text-xs sm:text-sm font-bold text-[#2D332D]">
-                  {activeConv?.title || "Nueva conversación"}
-                </h3>
-                <p className="text-[11px] sm:text-xs text-[#7A7167] leading-relaxed">
-                  Escribí abajo o usá los botones superiores para cargar información del día o pedir tu reporte con consejos.
-                </p>
-              </div>
+              <h3 className="text-xs font-bold text-[#5A534D] mt-2">
+                {esCanalCargaDatos ? "Carga Diaria (BD)" : "Consultas"}
+              </h3>
             </div>
           ) : (
             currentMessages.map((msg) => {
@@ -1717,12 +1811,18 @@ ${textToSummarize}`;
               if (isUser) {
                 return (
                   <div key={msg.id} className="flex justify-end">
-                    <div className="bg-[#7D9B7A] text-white rounded-2xl p-3 sm:p-4 text-xs sm:text-sm leading-relaxed max-w-[88%] sm:max-w-lg shadow-2xs">
+                    <div
+                      className={`${
+                        esCanalCargaDatos ? "bg-[#1E5678]" : "bg-[#7D9B7A]"
+                      } text-white rounded-2xl p-3 sm:p-4 text-xs sm:text-sm leading-relaxed max-w-[88%] sm:max-w-lg shadow-2xs`}
+                    >
                       {msg.text}
                     </div>
                   </div>
                 );
               }
+
+              const camposReales = msg.desgloseReporte?.camposExtraidosReales || [];
 
               return (
                 <div key={msg.id} className="flex items-start gap-2 sm:gap-3 max-w-full sm:max-w-2xl">
@@ -1731,105 +1831,78 @@ ${textToSummarize}`;
                   </div>
 
                   <div className="space-y-2 flex-1 min-w-0">
-                    {/* Tarjeta Dual Separada: 1. Carga de Datos Operativos vs 2. Aspecto Psicológico */}
-                    {msg.desgloseReporte && (
-                      <div className="bg-white border border-[#EAE2D6] rounded-2xl p-3 sm:p-4 space-y-3 text-xs text-[#2D332D] shadow-2xs">
-                        <div className="flex items-center justify-between pb-2 border-b border-[#EAE2D6] flex-wrap gap-1.5">
-                          <div className="flex items-center gap-2">
-                            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                            <span className="font-bold text-[#2D332D] text-[11px] sm:text-xs uppercase tracking-wider">
-                              ✓ Momento del Día Registrado y Separado
-                            </span>
-                          </div>
-                          <span className="text-[10px] font-bold text-sky-900 bg-sky-100/80 px-2 py-0.5 rounded-md">
-                            {msg.desgloseReporte.horaRegistrada} hs · {msg.desgloseReporte.franjaLabel}
+                    {/* TARJETA DE CONFIRMACIÓN DE RESUMEN DE SESIÓN EN CHAT B (CONSULTAS) */}
+                    {msg.desgloseResumenSesion && (
+                      <div className="bg-emerald-50/70 border border-emerald-300 rounded-2xl p-3.5 sm:p-4 space-y-2.5 text-xs text-emerald-950 shadow-2xs">
+                        <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
+                          <span className="font-extrabold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                            ✓ Resumen de Sesión Guardado en Base de Datos
+                          </span>
+                          <span className="text-[10px] font-bold bg-white px-2 py-0.5 rounded-md border border-emerald-200">
+                            Control: {msg.desgloseResumenSesion.controloEmocion.toUpperCase()}
                           </span>
                         </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                          {/* BLOQUE 1: CARGA DE DATOS OPERATIVOS */}
-                          <div className="bg-[#F4F8FA] border border-sky-900/15 rounded-xl p-2.5 space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-extrabold text-sky-900 uppercase tracking-wider flex items-center gap-1">
-                                <Database className="h-3 w-3 text-sky-700" />
-                                1. Carga de Datos (Operativo)
-                              </span>
-                              <span className="text-[10px] font-bold text-sky-800 bg-white px-1.5 py-0.5 rounded border border-sky-900/10">
-                                Prod: {msg.desgloseReporte.datosOperativos?.productividadScore ?? msg.desgloseReporte.productividad ?? 7}/10
-                              </span>
-                            </div>
-                            <div className="text-[11px] space-y-1 text-[#2D332D]">
-                              <div>
-                                <span className="font-bold text-[#5B707B]">Actividad: </span>
-                                <span className="font-medium">
-                                  {msg.desgloseReporte.datosOperativos?.actividadRealizada || "Avance en bloque actual"}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="font-bold text-[#5B707B]">Metas: </span>
-                                <span className="font-semibold text-sky-900">
-                                  {(msg.desgloseReporte.datosOperativos?.metasActivas || msg.desgloseReporte.metasEspecificas || []).join(" · ") || "Estudio / Proyecto"}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="font-bold text-[#5B707B]">Ventana / Corte: </span>
-                                <span>
-                                  {msg.desgloseReporte.datosOperativos?.ventanaDisponible || msg.desgloseReporte.ventanaDisponibleTexto}
-                                </span>
-                              </div>
-                              {msg.desgloseReporte.datosOperativos?.desvioDetectado && (
-                                <div className="text-[10px] font-semibold text-amber-900 bg-amber-100/70 px-2 py-0.5 rounded-md">
-                                  ⚠️ {msg.desgloseReporte.datosOperativos.desvioDetectado}
-                                </div>
-                              )}
-                            </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                          <div className="bg-white/90 p-2 rounded-xl border border-emerald-200/70">
+                            <strong className="text-emerald-900 block">Patrones identificados:</strong>
+                            <span>{msg.desgloseResumenSesion.patronesIdentificados.join(" · ")}</span>
                           </div>
-
-                          {/* BLOQUE 2: ASPECTO PSICOLÓGICO */}
-                          <div className="bg-[#FAF6F0] border border-amber-900/15 rounded-xl p-2.5 space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-extrabold text-amber-950 uppercase tracking-wider flex items-center gap-1">
-                                <Brain className="h-3 w-3 text-amber-700" />
-                                2. Aspecto Psicológico
-                              </span>
-                              <span className="text-[10px] font-bold text-emerald-800 bg-white px-1.5 py-0.5 rounded border border-amber-900/10">
-                                E:{msg.desgloseReporte.energia}/10 · Á:{msg.desgloseReporte.animo ?? msg.desgloseReporte.energia}/10 · P:{msg.desgloseReporte.estresPresion}/10
-                              </span>
-                            </div>
-                            <div className="text-[11px] space-y-1 text-[#2D332D]">
-                              <div>
-                                <span className="font-bold text-[#7A7167]">Estado: </span>
-                                <span className="font-semibold text-amber-950">
-                                  {msg.desgloseReporte.aspectoPsicologico?.estadoEtiqueta || "Tranquilo y operativo"}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="font-bold text-[#7A7167]">Fricción interna: </span>
-                                <span>
-                                  {msg.desgloseReporte.aspectoPsicologico?.friccionInterna || msg.desgloseReporte.friccionDetectada}
-                                </span>
-                              </div>
-                              <div>
-                                <span className="font-bold text-[#7A7167]">Método regulación: </span>
-                                <span className="font-semibold text-emerald-800">
-                                  {msg.desgloseReporte.aspectoPsicologico?.metodoRegulacion || msg.desgloseReporte.metodoAplicado}
-                                </span>
-                              </div>
-                            </div>
+                          <div className="bg-white/90 p-2 rounded-xl border border-emerald-200/70">
+                            <strong className="text-emerald-900 block">Emociones y Autoimagen:</strong>
+                            <span>
+                              {msg.desgloseResumenSesion.emocionesDetectadas.join(", ")} · {msg.desgloseResumenSesion.autoimagenYSensacionesPrimitivas}
+                            </span>
+                          </div>
+                          <div className="bg-white/90 p-2 rounded-xl border border-emerald-200/70">
+                            <strong className="text-emerald-900 block">Respuesta del usuario:</strong>
+                            <span>{msg.desgloseResumenSesion.respuestaUsuario}</span>
+                          </div>
+                          <div className="bg-white/90 p-2 rounded-xl border border-emerald-200/70">
+                            <strong className="text-emerald-900 block">Método regulador:</strong>
+                            <span>
+                              {msg.desgloseResumenSesion.metodoReguladorDetectado || "Reflexión consciente"}
+                              {msg.desgloseResumenSesion.esMetodoNuevo && (
+                                <strong className="text-emerald-700 ml-1">
+                                  (★ Nuevo Método Guardado en BD)
+                                </strong>
+                              )}
+                            </span>
                           </div>
                         </div>
                       </div>
                     )}
 
-                    <div className="bg-white border border-[#EAE2D6] rounded-2xl p-3 sm:p-4 text-xs sm:text-sm text-[#3A3530] leading-relaxed shadow-2xs space-y-2">
+                    {/* BURBUJA ÚNICA, BREVE Y FIEL A LO QUE EL USUARIO INFORMÓ */}
+                    <div className="bg-white border border-[#EAE2D6] rounded-2xl p-3 sm:p-3.5 text-xs sm:text-sm text-[#3A3530] leading-relaxed shadow-2xs space-y-2">
                       <p className="whitespace-pre-wrap">{limpiarFormatoPlano(msg.text)}</p>
-                      <div className="pt-2 border-t border-[#EAE2D6]/60 flex items-center justify-between gap-2 text-[11px]">
-                        {msg.desgloseReporte ? (
+
+                      {/* Desglose compacto SOLO de los datos que el usuario realmente mencionó */}
+                      {camposReales.length > 0 && (
+                        <div className="pt-1.5 border-t border-[#EAE2D6]/70 space-y-1">
+                          {camposReales.map((campo, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-start gap-1.5 text-[11px] bg-[#F8F5EE] px-2.5 py-1.5 rounded-xl border border-[#EAE2D6]"
+                            >
+                              <span className="font-bold text-[#1E5678] shrink-0">
+                                {campo.etiqueta}:
+                              </span>
+                              <span className="text-[#2D332D] font-medium">
+                                {campo.valor}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="pt-1.5 border-t border-[#EAE2D6]/60 flex items-center justify-between gap-2 text-[11px] flex-wrap">
+                        {msg.desgloseReporte || msg.desgloseResumenSesion ? (
                           <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                            ✓ Guardado en Logs Diarios, PocketBase y Objetivos [PROD-3]
+                            ✓ Guardado en BD ({msg.desgloseReporte?.horaRegistrada || "Hoy"})
                           </span>
                         ) : (
-                          <span className="text-[#A69D91] italic">Modo consulta</span>
+                          <span />
                         )}
                         <button
                           type="button"
@@ -1837,7 +1910,7 @@ ${textToSummarize}`;
                           disabled={guardandoEnArbolId === msg.id}
                           className="px-2.5 py-1 rounded-lg bg-[#8BA888]/15 hover:bg-[#8BA888] text-[#6D856B] hover:text-white font-bold transition cursor-pointer"
                         >
-                          {guardandoEnArbolId === msg.id ? "Guardando en Arbol..." : "+ Guardar como Vivencia en BD"}
+                          {guardandoEnArbolId === msg.id ? "Guardando..." : "+ Vivencia BD"}
                         </button>
                       </div>
                     </div>
@@ -1853,7 +1926,9 @@ ${textToSummarize}`;
               <div className="h-7 w-7 rounded-full bg-[#E5DFC5] shrink-0" />
               <div className="bg-white border border-[#EAE2D6] rounded-2xl px-3.5 py-2.5 text-xs text-[#7A7167] flex items-center gap-2 shadow-2xs">
                 <Sparkles className="h-3.5 w-3.5 animate-spin text-[#7D9B7A]" />
-                <span className="text-[11px] sm:text-xs">{profile.companionName} está reflexionando...</span>
+                <span className="text-[11px] sm:text-xs">
+                  {esCanalCargaDatos ? "Procesando carga..." : "Analizando..."}
+                </span>
               </div>
             </div>
           )}
@@ -1861,32 +1936,68 @@ ${textToSummarize}`;
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input box & Bottom Resumir Bar (Sin botones repetidos arriba del input) */}
-        <div className="mt-2 shrink-0 space-y-1.5">
+        {/* Input box multilínea auto-expansible y editable en ambos chats (Chat A y Chat B) */}
+        <div className="mt-1.5 shrink-0 space-y-1.5">
           <form
             onSubmit={handleSendMessage}
-            className="bg-[#F5F2EB] border border-[#EAE2D6] rounded-2xl p-1.5 sm:p-2 pl-3 sm:pl-4 flex items-center gap-2 focus-within:border-[#7D9B7A] focus-within:bg-white transition shadow-2xs"
+            className="bg-[#F5F2EB] border border-[#EAE2D6] rounded-2xl p-2 sm:p-2.5 pl-3 sm:pl-4 flex items-end gap-2 focus-within:border-[#7D9B7A] focus-within:bg-white transition shadow-2xs"
           >
-            <input
+            <textarea
               ref={inputRef}
-              type="text"
+              rows={isInputExpanded ? 5 : 2}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="Escribí tu carga del momento o consulta psicológica..."
+              onKeyDown={(e) => {
+                // En desktop Enter envía y Shift+Enter baja de línea; en mobile Enter permite bajar de línea libremente
+                const isMobileViewport = typeof window !== "undefined" && window.innerWidth < 768;
+                if (e.key === "Enter" && !e.shiftKey && !isMobileViewport) {
+                  e.preventDefault();
+                  if (inputText.trim() && !isLoading) {
+                    handleSendMessage(e as unknown as React.FormEvent);
+                  }
+                }
+              }}
+              placeholder={
+                esCanalCargaDatos
+                  ? "Escribir carga del día..."
+                  : "Escribir consulta..."
+              }
               disabled={isLoading}
-              className="flex-1 bg-transparent text-xs sm:text-sm text-[#2D332D] placeholder-[#A69D91] outline-none min-w-0 py-1"
+              className="flex-1 bg-transparent text-xs sm:text-sm text-[#2D332D] placeholder-[#A69D91] outline-none min-w-0 py-1 leading-relaxed resize-y overflow-y-auto"
+              style={{
+                minHeight: isInputExpanded ? "130px" : "52px",
+                maxHeight: isInputExpanded ? "300px" : "165px",
+              }}
             />
-            <button
-              type="submit"
-              disabled={!inputText.trim() || isLoading}
-              className="h-9 w-9 rounded-xl bg-[#7D9B7A] hover:bg-[#6D856B] disabled:bg-[#EAE2D6] disabled:text-[#A69D91] text-white flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs"
-              title="Enviar al chat"
-            >
-              <Send className="h-4 w-4" />
-            </button>
+            <div className="flex flex-col items-center gap-1 shrink-0 pb-0.5">
+              <button
+                type="button"
+                onClick={() => setIsInputExpanded((prev) => !prev)}
+                className="h-7 w-7 rounded-lg text-[#7A7167] hover:text-[#2D332D] hover:bg-[#EAE2D6]/60 flex items-center justify-center transition cursor-pointer"
+                title={isInputExpanded ? "Contraer área de escritura" : "Ampliar área de escritura"}
+              >
+                {isInputExpanded ? (
+                  <Minimize2 className="h-3.5 w-3.5" />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5" />
+                )}
+              </button>
+              <button
+                type="submit"
+                disabled={!inputText.trim() || isLoading}
+                className={`h-9 w-9 rounded-xl ${
+                  esCanalCargaDatos
+                    ? "bg-[#1E5678] hover:bg-[#16425B]"
+                    : "bg-[#7D9B7A] hover:bg-[#6D856B]"
+                } disabled:bg-[#EAE2D6] disabled:text-[#A69D91] text-white flex items-center justify-center transition cursor-pointer shrink-0 shadow-2xs`}
+                title={esCanalCargaDatos ? "Desglosar y enviar a Base de Datos" : "Enviar consulta"}
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            </div>
           </form>
 
-          {/* Bottom Secondary Bar: Analizar Contexto & Resumir y Guardar */}
+          {/* Bottom Secondary Bar */}
           <div className="flex items-center justify-between gap-2 pt-0.5">
             <button
               type="button"
@@ -1903,25 +2014,27 @@ ${textToSummarize}`;
               <span>Evolución 8D</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleSummarizeAndUpload}
-              disabled={isSummarizing || currentMessages.filter((m) => m.sender === "user").length === 0}
-              className="inline-flex items-center gap-1 sm:gap-1.5 px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold bg-[#EAE2D6]/80 hover:bg-[#8BA888] text-[#4A443F] hover:text-white shadow-2xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-              title="Sintetiza la conversación con Groq y sube el resumen a PocketBase"
-            >
-              {isSummarizing ? (
-                <>
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span>Resumiendo...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-3 w-3 text-[#6D856B]" />
-                  <span>Guardar Resumen Sesión</span>
-                </>
-              )}
-            </button>
+            {!esCanalCargaDatos && (
+              <button
+                type="button"
+                onClick={handleSummarizeAndUpload}
+                disabled={isSummarizing || currentMessages.filter((m) => m.sender === "user").length === 0}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[10px] sm:text-xs font-extrabold bg-[#6D856B] hover:bg-[#576D56] text-white shadow-2xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                title="Desglosa patrones, emociones, respuestas y métodos de esta consulta y los envía a la Base de Datos"
+              >
+                {isSummarizing ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Guardando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-3.5 w-3.5 text-amber-200" />
+                    <span>Guardar Resumen de Sesión</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 

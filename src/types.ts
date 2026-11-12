@@ -133,6 +133,40 @@ export interface AnalysisMetadata {
   processedAt?: string;
 }
 
+export type ChatChannel = 'carga_datos' | 'consultas';
+
+export type CategoriaEmocion =
+  | 'autoimagen'
+  | 'sensacion_primitiva'
+  | 'estado_negativo'
+  | 'estado_positivo';
+
+export type FactorContextualPatron =
+  | 'algo_nuevo'
+  | 'tema_complicado'
+  | 'rechazo_o_respuesta_negativa'
+  | 'algo_salio_mal'
+  | 'fatiga_acumulada'
+  | 'presion_horario';
+
+export interface ActividadTiempoItem {
+  nombre: string;
+  categoria: 'productiva' | 'distraccion' | 'imprevisto' | 'regulacion_descanso';
+  minutos: number;
+}
+
+export interface CampoExtraidoReal {
+  categoria:
+    | 'salud_energia'
+    | 'animo_emocion'
+    | 'accion_tiempo'
+    | 'patron_observado'
+    | 'metodo_regulador'
+    | 'nota_especifica';
+  etiqueta: string;
+  valor: string;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -143,6 +177,7 @@ export interface Conversation {
   analysisMetadata?: AnalysisMetadata | null;
   rama_id?: RamaTematica;
   hiloActivo?: HiloActivo | null;
+  channel?: ChatChannel;
 }
 
 // Marco mental con trazabilidad de origen
@@ -192,6 +227,20 @@ export interface TacticalAnalysisBlock {
   fichasCitadas?: string[];
 }
 
+export interface DesgloseResumenSesion {
+  fechaHora: string;
+  temaPrincipal: string;
+  emocionesDetectadas: string[];
+  autoimagenYSensacionesPrimitivas: string;
+  detonanteContexto: string;
+  respuestaUsuario: string;
+  controloEmocion: 'si' | 'parcial' | 'no';
+  patronesIdentificados: string[];
+  metodoReguladorDetectado?: string;
+  esMetodoNuevo?: boolean;
+  guardadoEnBD: boolean;
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -204,6 +253,7 @@ export interface Message {
   } | null;
   energyLevel?: number | null;
   tacticalAnalysis?: TacticalAnalysisBlock | null;
+  desgloseResumenSesion?: DesgloseResumenSesion | null;
   desgloseReporte?: {
     horaRegistrada: string;
     franjaLabel: string;
@@ -214,11 +264,56 @@ export interface Message {
     productividad?: number;
     friccionDetectada: string;
     metodoAplicado: string;
+    esMetodoNuevo?: boolean;
     resultadoMetodo: string;
     metasEspecificas: string[];
     compromisoHorario?: string;
     ventanaDisponibleTexto: string;
-    // Separación explícita: Carga de Datos Operativos vs Aspecto Psicológico
+    guardadoEnBD?: boolean;
+    seccionesInformadas?: {
+      saludEnergia: boolean;
+      animoEmociones: boolean;
+      accionTiempo: boolean;
+      patronObservado: boolean;
+      metodoRegulador: boolean;
+    };
+    camposExtraidosReales?: CampoExtraidoReal[];
+    // Las 3 Variables Clave de Carga Diaria
+    variableSaludEnergia?: {
+      score: number;
+      enCondiciones: boolean;
+      estadoFisicoMental: string;
+      desgasteDia: string;
+    };
+    variableAnimoEmociones?: {
+      score: number;
+      emocionesDetectadas: string[];
+      manejoAutoimagen: string;
+      sensacionesPrimitivas: string;
+      estadosNegativos: string[];
+      respuestaAnteNegativo: string;
+      controloEmociones: 'si' | 'parcial' | 'no';
+      metodoRegulador: string;
+      esMetodoNuevo: boolean;
+      resultadoRegulacion: 'exito' | 'parcial' | 'fallo';
+    };
+    variableAccion?: {
+      score: number;
+      actividadesRealizadas: ActividadTiempoItem[];
+      tiempoProductivoMin: number;
+      tiempoDistraidoMin: number;
+      tiempoRegulacionMin: number;
+      actividadesNegativasDistraccion: string;
+      distribucionResumen: string;
+    };
+    patronesContexto?: {
+      horaContexto: string;
+      actividadContexto: string;
+      factoresContextuales: FactorContextualPatron[];
+      etiquetasFactores: string[];
+      patronDetectado: string;
+    };
+    // Separación explícita retrocompatible: Carga de Datos Operativos vs Aspecto Psicológico
     datosOperativos?: {
       momentoDia: string;
       actividadRealizada: string;
@@ -247,7 +342,7 @@ export interface Message {
 }
 
 export type TipoObjetivo = 'crecimiento_psicologico' | 'productivo';
-export type PeriodoObjetivo = 'semanal' | 'mensual';
+export type PeriodoObjetivo = 'diario' | 'semanal' | 'mensual';
 
 export type CodigoRasgo =
   | 'PSI-1_autoconfianza'
@@ -275,12 +370,37 @@ export interface DailyLog {
   dateKey?: string;                    // "YYYY-MM-DD"
   horaExacta?: string;                 // "HH:mm"
   franja?: FranjaOperativa;
-  // Métricas numéricas 1 a 10
-  energy: number;
-  motivation: number;
-  stress: number;
-  moodScore?: number;                  // Estado de ánimo (1-10)
-  productivityScore?: number;          // Estado de productividad (1-10)
+  // Métricas numéricas 1 a 10 (Las 3 Variables Clave)
+  energy: number;                      // Variable 1: Salud y Energía (1-10)
+  motivation: number;                  // Foco / Motivación (1-10)
+  stress: number;                      // Presión / Desgaste (1-10)
+  moodScore?: number;                  // Variable 2: Estado de Ánimo y Emociones (1-10)
+  productivityScore?: number;          // Variable 3: Acción y Productividad (1-10)
+  // Variable 1: Salud y Energía
+  energiaMencionada?: boolean;
+  animoMencionado?: boolean;
+  accionMencionada?: boolean;
+  patronMencionado?: boolean;
+  camposExtraidosReales?: CampoExtraidoReal[];
+  enCondiciones?: boolean;
+  desgasteAcumulado?: string;
+  // Variable 2: Estado de Ánimo, Emociones y Regulación
+  emocionesDetectadas?: string[];
+  manejoAutoimagen?: string;
+  sensacionesPrimitivas?: string;
+  estadosNegativos?: string[];
+  respuestaEstadoNegativo?: string;
+  controloEmociones?: 'si' | 'parcial' | 'no';
+  esMetodoNuevo?: boolean;
+  // Variable 3: Acción, Actividades y Tiempos
+  tiempoProductivoMin?: number;
+  tiempoDistraidoMin?: number;
+  tiempoRegulacionMin?: number;
+  actividadesDetalle?: ActividadTiempoItem[];
+  actividadesNegativasDistraccion?: string;
+  // Patrones y Contexto
+  factoresContextuales?: FactorContextualPatron[];
+  patronContextoResumen?: string;
   // Vínculo con Objetivos y Rasgos
   tipoReporte?: TipoObjetivo | 'estado_general';
   objetivoId?: string;                 // ID del ObjetivoEstructurado

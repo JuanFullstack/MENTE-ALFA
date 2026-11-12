@@ -16,6 +16,10 @@ import {
   generarAuditoriaComoVamos,
   formatearAuditoriaParaPrompt,
 } from "../lib/progressAuditor";
+import {
+  compilarHistorialCompletoCargas,
+  sincronizarLogsConMensajesChatA,
+} from "../lib/dateTimeUtils";
 import { construirArbolDesdeDatos } from "../lib/storage";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -89,19 +93,25 @@ export default async function handler(req: any, res: any) {
 
     const infoHora = clasificarFranjaHoraria();
     const horaActualTextoFinal = horaActualTexto || `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
+    const evalModo = evaluarModoInteraccion(ultimoMensajeUsuario, messages || []);
     const modoInteraccionFinal: ModoInteraccionIA =
-      modoInteraccion || evaluarModoInteraccion(ultimoMensajeUsuario, messages || []).modo;
+      modoInteraccion || evalModo.modo;
 
+    const logsSincronizados = sincronizarLogsConMensajesChatA(logs || [], messages || []);
     let auditoriaTextoFinal = auditoriaComoVamosTexto;
-    if (!auditoriaTextoFinal && (objetivosEstructurados.length > 0 || logs.length > 0)) {
+    if (!auditoriaTextoFinal && (objetivosEstructurados.length > 0 || logsSincronizados.length > 0)) {
       const audObj = generarAuditoriaComoVamos(
-        logs || [],
+        logsSincronizados,
         objetivosEstructurados || [],
         memories || [],
         strategies || []
       );
-      auditoriaTextoFinal = formatearAuditoriaParaPrompt(audObj);
+      const historialCargas = compilarHistorialCompletoCargas(logs || [], messages || []);
+      auditoriaTextoFinal = `${historialCargas}\n\n${formatearAuditoriaParaPrompt(audObj)}`;
     }
+
+    const desgloseReporteTextoFinal =
+      desgloseReporteTexto || compilarHistorialCompletoCargas(logs || [], messages || []);
 
     const systemInstruction = buildRepairedSystemPrompt({
       ramaActiva,
@@ -112,7 +122,8 @@ export default async function handler(req: any, res: any) {
       horaActualTexto: horaActualTextoFinal,
       modoInteraccion: modoInteraccionFinal,
       auditoriaComoVamosTexto: auditoriaTextoFinal,
-      desgloseReporteTexto,
+      desgloseReporteTexto: desgloseReporteTextoFinal,
+      evaluacionContexto: evalModo.evaluacionContexto,
     });
 
     const headerKey = req.headers?.["x-groq-api-key"];
@@ -128,14 +139,16 @@ export default async function handler(req: any, res: any) {
     }
 
     const recentMessages = (messages || []).slice(-5);
-    const groqMessages = [
+    const groqMessages: Array<{ role: string; content: string }> = [
       { role: "system", content: systemInstruction },
       ...recentMessages.map((m: any) => ({
         role: m.sender === "user" ? "user" : "assistant",
         content: m.text,
       })),
-      { role: "assistant", content: ASSISTANT_PREFILL_TAG },
     ];
+    if (ASSISTANT_PREFILL_TAG) {
+      groqMessages.push({ role: "assistant", content: ASSISTANT_PREFILL_TAG });
+    }
 
     const response = await fetch(GROQ_API_URL, {
       method: "POST",
@@ -146,7 +159,7 @@ export default async function handler(req: any, res: any) {
       body: JSON.stringify({
         model: PRIMARY_MODEL,
         messages: groqMessages,
-        temperature: 0.25,
+        temperature: 0.35,
         max_tokens: 900,
       }),
     });
@@ -160,14 +173,11 @@ export default async function handler(req: any, res: any) {
 
     const data: any = await response.json();
     const rawContent = cleanThinkTags(data.choices?.[0]?.message?.content || "");
-    const fullContent = rawContent.startsWith("<analisis_contextual>")
-      ? rawContent
-      : `${ASSISTANT_PREFILL_TAG} ${rawContent}`;
 
     const { formattedMessage, tacticalAnalysis } = parseRepairedTacticalOutput(
-      fullContent,
+      rawContent,
       ramaActiva,
-      true
+      false
     );
 
     return res.status(200).json({

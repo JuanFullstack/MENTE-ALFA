@@ -16,6 +16,7 @@ import {
   ArbolMemoriaJerarquico,
   ModuloNarrativoPersuasivo,
 } from "../types";
+import { getTelemetriaTemporalCompleta } from "./dateTimeUtils";
 
 export const RAW_BASE_CONTEXT = `## Perfil General
 * **Nombre:** Juan Francisco Cano
@@ -701,6 +702,9 @@ COMO DETECTAR CUANDO LA MENTE O LOS INSTINTOS PRIMITIVOS ENGANAN A JUAN SIN QUE 
 `;
 
 export type ModoInteraccionIA =
+  | 'consulta_reportes_objetivos'
+  | 'indagacion_contexto_inteligente'
+  | 'consulta_con_contexto_suficiente'
   | 'sondeo_contexto_vago'
   | 'auditoria_como_vamos'
   | 'reporte_operativo_checkin'
@@ -708,58 +712,159 @@ export type ModoInteraccionIA =
   | 'reporte_con_consejos'
   | 'consejo_tactico_directo';
 
+export interface EvaluacionSuficienciaContexto {
+  contextoSuficiente: boolean;
+  esConsultaDatosObjetivos: boolean;
+  yaInformado: string[];
+  faltanteParaIndagar: string[];
+  resumenContextoDetectado: string;
+}
+
+/**
+ * Sistema evaluador de suficiencia de contexto antes de indagar.
+ * 1) Revisa qué datos YA dio el usuario en su mensaje (y en el turno inmediato) para NO preguntar algo que ya dijo.
+ * 2) Determina si el contexto ya es suficiente para responder directo sin interrogar de más.
+ * 3) Distingue si es una consulta de datos/reportes/objetivos (no psicológica).
+ */
+export function evaluarSuficienciaContexto(
+  textoUsuario: string,
+  historialReciente: Array<{ sender?: string; role?: string; text?: string; content?: string }> = []
+): EvaluacionSuficienciaContexto {
+  const txt = (textoUsuario || "").trim();
+  const txtLower = txt.toLowerCase();
+  const palabras = txt.split(/\s+/).filter(Boolean);
+
+  // 1. ¿Es una consulta objetiva de reportes / métricas / objetivos / resumen de ayer o de hoy?
+  const regexConsultaDatos =
+    /(reportes?\s+de\s+la\s+semana|reportes?\s+del\s+mes|dame\s+los?\s+reportes?|como\s+voy|cómo\s+voy|como\s+vamos|cómo\s+vamos|como\s+venimos|cómo\s+venimos|mis\s+objetivos|cumpliendo\s+los\s+objetivos|estad[ií]sticas|m[eé]tricas|resumen\s+semanal|resumen\s+mensual|resumen\s+anual|cu[aá]nto\s+tiempo|controlando\s+el\s+tiempo|distribuci[oó]n\s+de\s+actividades|resumen\s+de\s+ayer|reporte\s+de\s+ayer|qu[eé]\s+hice\s+ayer|c[oó]mo\s+me\s+fue\s+ayer|resumen\s+de\s+hoy|reporte\s+de\s+hoy|qu[eé]\s+hice\s+hoy|c[oó]mo\s+vengo\s+hoy|c[oó]mo\s+me\s+fue\s+hoy|resumen\s+del\s+d[ií]a|reporte\s+del\s+d[ií]a|cargas?\s+de\s+ayer|cargas?\s+de\s+hoy|ayer\s+fue\s+\d+|hoy\s+es\s+\d+|contame\s+un\s+resumen|qu[eé]\s+pas[oó]\s+ayer)/i;
+  if (regexConsultaDatos.test(txtLower)) {
+    return {
+      contextoSuficiente: true,
+      esConsultaDatosObjetivos: true,
+      yaInformado: ["Solicitud directa de reportes, métricas y avance de objetivos"],
+      faltanteParaIndagar: [],
+      resumenContextoDetectado: "Consulta objetiva de reportes y objetivos (NO es consulta psicológica).",
+    };
+  }
+
+  // Combinar con el último mensaje del usuario si viene respondiendo a una pregunta previa
+  const ultimosUser = (historialReciente || [])
+    .filter((m) => m.sender === "user" || m.role === "user")
+    .slice(-2)
+    .map((m) => (m.text || m.content || "").toLowerCase());
+  const textoAcumuladoHilo = [...ultimosUser, txtLower].join(" ");
+
+  const ultimoAsistente = [...(historialReciente || [])]
+    .reverse()
+    .find((m) => m.sender === "assistant" || m.role === "assistant");
+  const asistenteYaIndago =
+    Boolean(ultimoAsistente) && (ultimoAsistente?.text || ultimoAsistente?.content || "").includes("?");
+
+  const yaInformado: string[] = [];
+  const faltanteParaIndagar: string[] = [];
+
+  // A) ¿Mencionó Acción / Actividad?
+  if (
+    /(estudi|unidad|tesis|program|c[oó]digo|app|trabaj|entren|gimnasio|leer|leyendo|haciendo|intentando|rindiendo|examen|pr[aá]ctico|limpi|orden|salir|hablar|reuni[oó]n)/i.test(
+      textoAcumuladoHilo
+    )
+  ) {
+    yaInformado.push("Acción/Actividad que estaba realizando o por realizar");
+  } else {
+    faltanteParaIndagar.push("Qué actividad o acción estaba haciendo (o intentando hacer)");
+  }
+
+  // B) ¿Mencionó Hora / Duración / Sueño / Desgaste previo?
+  if (
+    /(\d{1,2}:\d{2}|son las|a las|desde las|hace \d+|durante \d+|\d+\s*horas?|\d+\s*min|mañana|tarde|noche|mediod[ií]a|dorm[ií]|despert[eé]|toda la mañana|todo el d[ií]a)/i.test(
+      textoAcumuladoHilo
+    )
+  ) {
+    yaInformado.push("Momento del día, horario o tiempo de esfuerzo/sueño previo");
+  } else {
+    faltanteParaIndagar.push("Desde qué hora viene con esto o cuántas horas de esfuerzo/sueño acumula hoy");
+  }
+
+  // C) ¿Mencionó Causa / Explicación / Detonante?
+  if (
+    /(porque|por que|debido a|ya que|pasa que|pas[oó] que|resulta que|me dijeron|sali[oó] mal|complicado|dif[ií]cil|nuevo|no entiendo|rechazo|discut|pelea|imprevisto|fogaje)/i.test(
+      textoAcumuladoHilo
+    )
+  ) {
+    yaInformado.push("Causa o hecho puntual que disparó la situación");
+  } else {
+    faltanteParaIndagar.push("Si ocurrió algún hecho puntual, tema difícil o interacción con alguien que lo disparó");
+  }
+
+  // D) ¿Mencionó Lugar / Entorno / Personas?
+  if (
+    /(casa|habitaci[oó]n|escritorio|cama|facultad|gimnasio|calle|bar|oficina|con mi|con un|gente|amigo|familia|profesor|mentor|compañero)/i.test(
+      textoAcumuladoHilo
+    )
+  ) {
+    yaInformado.push("Lugar, entorno o personas involucradas");
+  } else {
+    faltanteParaIndagar.push("En qué lugar está o si hubo otras personas involucradas");
+  }
+
+  // Regla de suficiencia:
+  // - Si el usuario ya respondió a una indagación previa del asistente, o
+  // - Si ya informó al menos 2 dimensiones de contexto (ej. actividad + causa/hora), o
+  // - Si el mensaje tiene más de 22 palabras explicando la situación:
+  // entonces el contexto YA ES SUFICIENTE y no debe interrogar de más.
+  const contextoSuficiente =
+    asistenteYaIndago ||
+    yaInformado.length >= 2 ||
+    palabras.length >= 22;
+
+  return {
+    contextoSuficiente,
+    esConsultaDatosObjetivos: false,
+    yaInformado,
+    faltanteParaIndagar,
+    resumenContextoDetectado: contextoSuficiente
+      ? `Contexto suficiente (${yaInformado.join("; ")}).`
+      : `Contexto insuficiente. Ya informó: [${yaInformado.join(", ") || "solo el estado general"}]. Falta indagar: [${faltanteParaIndagar.slice(0, 2).join(", ")}].`,
+  };
+}
+
 export function evaluarModoInteraccion(
   textoUsuario: string,
   historialReciente: Array<{ sender?: string; role?: string; text?: string; content?: string }> = []
 ): {
   modo: ModoInteraccionIA;
   motivo: string;
+  evaluacionContexto: EvaluacionSuficienciaContexto;
 } {
-  const txt = (textoUsuario || "").trim().toLowerCase();
-  const palabras = txt.split(/\s+/).filter(Boolean);
+  const evalCtx = evaluarSuficienciaContexto(textoUsuario, historialReciente);
 
-  const regexComoVamos = /(como vamos|cómo vamos|como venimos|cómo venimos|cumpliendo los objetivos|mis objetivos|en que estoy fallando|en qué estoy fallando|dame un reporte|evaluame|evalúame|balance de la semana|balance del mes)/i;
-  if (regexComoVamos.test(txt)) {
+  if (evalCtx.esConsultaDatosObjetivos) {
     return {
-      modo: "auditoria_como_vamos",
-      motivo: "El usuario solicitó auditoría de cumplimiento de objetivos, horarios de reporte, fallos y valoración de métodos exitosos.",
+      modo: "consulta_reportes_objetivos",
+      motivo: "El usuario consulta datos objetivos de sus reportes, tiempos o avance de objetivos (no es consulta psicológica).",
+      evaluacionContexto: evalCtx,
     };
   }
 
-  // Detección de reporte operativo / check-in de jornada
-  const tieneIndiciosHorarios = /(?:son las|a las|tipo \d+|mediod[ií]a|durante la mañana|en la tarde|\d{1,2}:\d{2}|\d{1,2} y \d{2})\b/i.test(txt);
-  const tieneIndiciosEstadoOAccion = /(?:mi estado|energ[ií]a|desganado|desgano|tranquilo|positivo|presionado|presi[oó]n|foco|productiv|meditaci[oó]n|avanzar|estudiar|unidad|compromiso|promet[ií]|fogaje|cosas intermedia)/i.test(txt);
-  if (tieneIndiciosHorarios && tieneIndiciosEstadoOAccion) {
+  if (!evalCtx.contextoSuficiente) {
     return {
-      modo: "reporte_operativo_checkin",
-      motivo: "El usuario envió un reporte operativo / check-in detallado con horas, estado bioemocional, métodos aplicados o metas de estudio.",
-    };
-  }
-
-  const ultimoMensajeAsistente = [...historialReciente]
-    .reverse()
-    .find((m) => m.sender === "assistant" || m.role === "assistant");
-  const asistentePreguntoRecien =
-    ultimoMensajeAsistente && (ultimoMensajeAsistente.text || ultimoMensajeAsistente.content || "").includes("?");
-
-  const tieneContextoEspecifico = /(tesis|facet|fisica|física|codigo|código|sql|examen|discord|lol|juego|alarma|6:45|7:30|entreno|gimnasio|boliche|santos|artur|bar|chica|mujer|renan|renán|ropa|reunion|reunión|ingles|inglés)/i.test(txt);
-
-  if (palabras.length <= 9 && !tieneContextoEspecifico && !asistentePreguntoRecien) {
-    return {
-      modo: "sondeo_contexto_vago",
-      motivo: "El mensaje es breve/vago y no especifica si el detonante es psicológico o productivo, por qué importa ahora o el nivel de energía.",
+      modo: "indagacion_contexto_inteligente",
+      motivo: evalCtx.resumenContextoDetectado,
+      evaluacionContexto: evalCtx,
     };
   }
 
   return {
-    modo: "consejo_tactico_directo",
-    motivo: "El mensaje contiene contexto suficiente para desenmascarar el autoengaño y prescribir el protocolo exacto.",
+    modo: "consulta_con_contexto_suficiente",
+    motivo: evalCtx.resumenContextoDetectado,
+    evaluacionContexto: evalCtx,
   };
 }
 
 /**
- * FASE 3: PROMPT DE INFERENCIA FINAL REPARADO
- * Integra la poda de ramas, la memoria del hilo activo, el detector de autoengaño y los 4 modos operativos.
+ * Construye el System Prompt para Chat B (Consultas) y reportes,
+ * eliminando respuestas genéricas, prohibiendo asumir causas pasadas no mencionadas
+ * y verificando qué dijo ya el usuario antes de indagar.
  */
 export function buildRepairedSystemPrompt(params: {
   ramaActiva: RamaTematica;
@@ -771,183 +876,156 @@ export function buildRepairedSystemPrompt(params: {
   modoInteraccion?: ModoInteraccionIA;
   auditoriaComoVamosTexto?: string;
   desgloseReporteTexto?: string;
+  evaluacionContexto?: EvaluacionSuficienciaContexto;
 }): string {
-  const modo = params.modoInteraccion || "consejo_tactico_directo";
-  const horaInfo = params.horaActualTexto || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const modo = params.modoInteraccion || "consulta_con_contexto_suficiente";
+  const telemetriaTemporal = getTelemetriaTemporalCompleta();
+  const horaInfo =
+    params.horaActualTexto ||
+    `${telemetriaTemporal.horaActualTexto} (San Miguel de Tucumán, Argentina)`;
+  const evalCtx = params.evaluacionContexto;
+
+  const reglasCriticasAntiErrores = `REGLAS CRÍTICAS INQUEBRANTABLES (PROHIBIDO VIOLARLAS):
+1. REGLA TEMPORAL INMUTABLE (FECHA Y DÍA REAL - PROHIBIDO CONFUNDIR HOY CON AYER):
+   - HOY es ${telemetriaTemporal.fechaHoyDesc} (ISO: ${telemetriaTemporal.fechaHoyIso}).
+   - AYER fue ${telemetriaTemporal.fechaAyerDesc} (ISO: ${telemetriaTemporal.fechaAyerIso}).
+   - PROHIBIDO decir que ayer fue hoy (${telemetriaTemporal.fechaHoyDesc}) o cualquier otra fecha.
+   - Si Juan consulta "resumen de ayer", "qué hice ayer", "cómo me fue ayer" o "reporte de ayer", usá EXCLUSIVAMENTE los datos registrados de AYER (${telemetriaTemporal.fechaAyerDesc}) que están en <auditoria_objetivos_y_horarios>.
+   - Si Juan consulta "resumen de hoy" o "cómo vengo hoy", referite a las cargas de HOY (${telemetriaTemporal.fechaHoyDesc}).
+   - PROHIBIDO decir que Juan tuvo 0 reportes o "silencio operativo" si en <auditoria_objetivos_y_horarios> figuran cargas registradas.
+2. PROHIBIDO USAR PLANTILLAS GENÉRICAS, RESPUESTAS LARGAS O LA MISMA ESTRUCTURA SIEMPRE:
+   - Sé breve, directo y natural. No uses siempre el mismo esquema ni repitas fórmulas.
+   - Adaptá el formato y extensión estrictamente a lo que Juan plantea en este mensaje.
+3. PROHIBIDO ASUMIR O ADIVINAR LO QUE JUAN NO DIJO EN SU MENSAJE ACTUAL:
+   - Atendé únicamente la información que Juan te da ahora.
+   - NO autocompletes estados emocionales, niveles de energía ni causas que él no mencionó.
+4. PROHIBIDO QUEDARSE PEGADO A REPORTES ANTERIORES DEL DÍA (EJ. "ME LEVANTÉ CANSADO"):
+   - Si a primera hora Juan reportó que se levantó cansado (o cualquier otro estado previo), NO asumas que sigue cansado ahora. Los estados cambian durante el día. Guiate exclusivamente por su mensaje actual.
+5. PROHIBIDO PREGUNTAR ALGO QUE JUAN YA DIJO EN SU MENSAJE:
+   - Lo que ya informó en su mensaje: ${evalCtx?.yaInformado?.length ? evalCtx.yaInformado.join(" | ") : "Revisar texto del usuario"}.
+   - Nunca le vuelvas a preguntar un dato que ya te acaba de dar.`;
 
   const bloqueInstruccionPorModo =
-    modo === "sondeo_contexto_vago"
-      ? `MODO ACTIVO EN ESTE TURNO: [1. SONDEO CONTEXTUAL QUIRÚRGICO ANTE MENSAJE VAGO]
-Juan acaba de enviar un mensaje corto o vago (como "estoy mal", "me siento trabado" o "no tengo ganas") sin explicar el detonante ni el contexto.
-- PROHIBIDO adivinar qué le pasa o lanzarle un discurso largo a ciegas.
-- Respondé en UN SOLO PÁRRAFO CORTO (máximo 3 a 4 líneas):
-  1) Mencioná con naturalidad la hora actual (${horaInfo}) para anclar el momento del día.
-  2) Hacele exactamente 2 preguntas directas y cortas para destrabar el contexto y registrar el patrón horario:
-     • ¿Qué hecho puntual pasó recién (viene por el lado de estudio/productividad o por algo social/personal)?
-     • ¿Qué objetivo o tarea importante del día te está frenando esto ahora mismo y cómo estás de energía física del 1 al 10?`
-      : modo === "carga_datos_momento"
-      ? `MODO ACTIVO EN ESTE TURNO: [5. CONFIRMACIÓN DE CARGA DE DATOS EN EL DÍA (OPTIMIZADO PARA MOBILE)]
-Juan acaba de cargar información de este momento del día (${horaInfo}) desde el celular.
-DATOS YA SEPARADOS Y GUARDADOS EN EL SISTEMA:
-${params.desgloseReporteTexto || "Datos operativos y aspecto psicológico registrados."}
+    modo === "consulta_reportes_objetivos" || modo === "auditoria_como_vamos" || modo === "reporte_con_consejos"
+      ? `MODO ACTIVO: [CONSULTA OBJETIVA DE REPORTES, RESÚMENES Y OBJETIVOS]
+Juan está haciendo una consulta sobre sus reportes, sus días (ayer, hoy, la semana), sus tiempos o cómo viene con sus objetivos.
+- CLARAMENTE NO ES UNA CONSULTA PSICOLÓGICA: PROHIBIDO psicologizar, interrogar o decirle "tu mente te engaña".
+- PROHIBIDO DECIR QUE NO TIENES REGISTROS O QUE HUBO "SILENCIO OPERATIVO" SI EN <auditoria_objetivos_y_horarios> APARECEN CARGAS REGISTRADAS.
+- SI PREGUNTA POR AYER ("resumen de ayer", "qué hice ayer", etc.):
+  * Referite explícitamente a AYER (${telemetriaTemporal.fechaAyerDesc}, ${telemetriaTemporal.fechaAyerIso}).
+  * Dale un resumen estructurado con sus datos reales de ayer:
+    1) Total de reportes y momentos en que cargó.
+    2) Actividades principales registradas y balance de tiempos (productivo vs. distraído vs. regulación).
+    3) Nivel de energía y ánimo registrados.
+    4) Métodos reguladores aplicados (ej. meditación, Yo Robot, etc.) y resultados.
+- SI PREGUNTA POR HOY ("resumen de hoy", "cómo vengo hoy", etc.):
+  * Referite a HOY (${telemetriaTemporal.fechaHoyDesc}, ${telemetriaTemporal.fechaHoyIso}).
+  * Resumí las cargas del día hasta la hora actual (${telemetriaTemporal.horaActualTexto}). Si recién empieza el día, decilo sin alarmismos.
+- SI PREGUNTA POR OBJETIVOS O RENDIMIENTO SEMANAL/MENSUAL:
+  * Mostrá el progreso numérico de sus objetivos activos y cumplimiento en base a la auditoría.`
+      : modo === "indagacion_contexto_inteligente" || modo === "sondeo_contexto_vago"
+      ? `MODO ACTIVO: [INDAGACIÓN INTELIGENTE DE CONTEXTO PARA IDENTIFICAR DETONANTES Y PATRONES]
+Juan envió una consulta breve donde todavía falta contexto para saber la causa real (ej. si es cansancio físico real vs. un detonante situacional).
+- Lo que Juan YA dijo en su mensaje (PROHIBIDO volver a preguntarlo): ${evalCtx?.yaInformado?.join(", ") || "Solo mencionó su estado general"}.
+- Lo que FALTA saber para entender el contexto: ${evalCtx?.faltanteParaIndagar?.slice(0, 2).join(" y ") || "Actividad actual, lugar/hora o si hubo algún detonante"}.
+- INSTRUCCIÓN DE RESPUESTA:
+  1) Respondé con naturalidad y empatía analítica en 3 a 5 líneas máximo, sin discursos prefabricados.
+  2) Validá que lo que siente puede deberse tanto a desgaste/cansancio real del día como a algún factor del momento.
+  3) Hacele solo 1 o 2 preguntas puntuales sobre lo que FALTA saber (por ejemplo: qué actividad estabas haciendo o por empezar, cómo venís de esfuerzo/sueño hoy, en qué lugar estás o si pasó algo puntual con alguien/algo que salió mal) para ayudarlo a detectar si hay un detonante o patrón.`
+      : modo === "carga_datos_momento" || modo === "reporte_operativo_checkin"
+      ? `MODO ACTIVO: [CONFIRMACIÓN DE CARGA DESGLOSADA EN BASE DE DATOS]
+Confirmá de manera clara y concisa el desglose enviado a la Base de Datos en las 3 Variables Clave:
+${params.desgloseReporteTexto || "Datos registrados en la Base de Datos."}`
+      : `MODO ACTIVO: [CONSULTA CON CONTEXTO SUFICIENTE — ANÁLISIS Y ESTRATEGIA A MEDIDA]
+Juan ya dio contexto suficiente en su mensaje (${evalCtx?.yaInformado?.join(", ") || "Contexto detallado"}).
+- NO le hagas un interrogatorio innecesario porque el contexto ya alcanza para ayudarlo.
+- Analizá específicamente la situación que acaba de describir en su mensaje actual (sin mezclar ni asumir causas de otros días).
+- Ayudalo a identificar:
+  1) Si lo que describe responde a fatiga biológica real (Salud y Energía) o a una fricción situacional/emocional (tema complejo, algo nuevo, autoexigencia, respuesta de otros).
+  2) Qué método regulador o acción concreta le conviene aplicar ahora mismo según su nivel de energía real.
+  3) Si aplica pero sin asumir nada como hecho, podés cerrar con una sola pregunta breve para confirmar si nota algún patrón con la hora o el tipo de actividad.`;
 
-INSTRUCCIONES DE RESPUESTA (BREVE, CLARA Y SEPARADA PARA LECTURA RÁPIDA EN CELULAR):
-Respondé en máximo 2 párrafos cortos separando nítidamente:
-1) [DATOS CARGADOS (${horaInfo})]: Confirmá qué actividad operativa, metas (ej. unidades/tareas) y ventana horaria o compromiso quedaron registrados en la línea del día, advirtiendo en una frase si hubo desvío/fogaje.
-2) [ESTADO PSICOLÓGICO]: Confirmá cómo quedó asentado su estado mental (energía, ánimo, presión) y validá el método de regulación aplicado, dejándolo libre para seguir su bloque o pedir el Reporte con Consejos cuando lo necesite.`
-      : modo === "reporte_con_consejos" || modo === "auditoria_como_vamos"
-      ? `MODO ACTIVO EN ESTE TURNO: [3. REPORTE INTEGRAL DEL DÍA CON CONSEJOS (SEPARANDO DATOS OPERATIVOS VS PSICOLOGÍA)]
-Juan presionó el botón para pedir un REPORTE CON CONSEJOS basado en las cargas que fue haciendo en los distintos momentos del día (${horaInfo}).
-Basate ESTRICTAMENTE en <auditoria_objetivos_y_horarios> y en los registros cargados hoy, y estructurá tu respuesta separando claramente estos 3 bloques:
+  return `Sos el analista y consultor personal de Juan Francisco Cano. Hablás en español rioplatense (voseo natural, claro, directo, sin clichés ni frases repetitivas).
 
-BLOQUE 1 - BALANCE DE CARGA DE DATOS (OPERATIVO Y HORARIOS):
-- Recorré las cargas realizadas en los diferentes momentos de hoy (horarios, qué actividades o unidades avanzó, qué metas declaró, compromisos horarios y puntos ciegos si faltó reportar alguna franja).
-- Marcá el progreso numérico real en sus Objetivos Productivos y si hubo desvío en tareas intermedias ("fogaje").
+${reglasCriticasAntiErrores}
 
-BLOQUE 2 - DIAGNÓSTICO PSICOLÓGICO (ESTADO, AUTOENGAÑO Y MÉTODOS):
-- Analizá por separado su evolución emocional hoy (energía, ánimo, foco, presión por el reloj) y el avance en sus Objetivos Psicológicos.
-- Desenmascará cualquier autoengaño o fricción mental detectada hoy y VALORÁ explícitamente los métodos psicológicos/biológicos que aplicó con éxito (ej. meditación de 12 min, agua fría y audio Horus, respiración del león, tolerar 15 min de confusión o Ideal Adaptado).
-
-BLOQUE 3 - CONSEJO TÁCTICO Y TIME-BOXING INMEDIATO (${horaInfo}):
-- Dale un plan de ataque concreto por bloques de tiempo (Time-Boxing con reloj en mano) para la ventana horaria disponible ahora mismo, uniendo la mecánica operativa con el decreto psicológico exacto.`
-      : modo === "reporte_operativo_checkin"
-      ? `MODO ACTIVO EN ESTE TURNO: [4. RECEPCIÓN Y DESGLOSE DE REPORTE OPERATIVO / CHECK-IN SEPARADO]
-Juan acaba de enviar un reporte de avance y estado de su jornada (${horaInfo}).
-DATOS YA REGISTRADOS EN EL SISTEMA:
-${params.desgloseReporteTexto || "Métricas, método exitoso y metas de estudio asentadas en ZenDB y PocketBase."}
-
-INSTRUCCIONES CLAVE DE RESPUESTA (SEPARANDO DATOS OPERATIVOS DE LO PSICOLÓGICO):
-1) SOBRE LA CARGA DE DATOS OPERATIVOS:
-   Confirmá qué datos operativos quedaron asentados (horario exacto, actividad hecha, metas como Unidad 5 y 7, y compromiso horario) y frená de raíz cualquier desvío en tareas secundarias ("fogaje" / mejoras de la app fuera de hora).
-2) SOBRE EL ASPECTO PSICOLÓGICO:
-   Separadamente, evaluá su estado interno (energía, ánimo, presión por el reloj) y valorá con frialdad de ingeniero el método de regulación que aplicó con éxito (ej. meditación de 12 min a las 10:30 hs para cortar el desgano).
-3) CONSEJO TÁCTICO POR BLOQUES (TIME-BOXING):
-   Armale un plan táctico con el reloj en mano para la ventana exacta disponible antes de su compromiso (ej. Bloque 1 de 75 min para Unidad 5 -> Pausa de 5 min agua fría/respiración de león -> Bloque 2 de 60 min para Unidad 7 -> Cierre limpio).`
-      : `MODO ACTIVO EN ESTE TURNO: [2. CONSEJO TÁCTICO DIRECTO CON GUÍA PRÁCTICA]
-1) DESENMASCARAR EL AUTOENGAÑO: Mostrale cómo su mente o el demonio interno lo quiere engañar (el "permitido corto" de LOL/videos/memes, "mañana empiezo", buscar aprobación externa en el boliche o encapricharse cuando un escenario es imperfecto).
-2) APLICAR EL PROTOCOLO EXACTO DE SU GUÍA SEGÚN EL CASO:
-   - Si es Autoconfianza/Social: Postura erguida inmediata, mirada firme sin esquivar, respiración lenta y decretos ("Yo controlo cómo sentirme", "Si no cumplo los estándares de alguien, que se pudra") o actitud Alma Libre sin esperar resultado (como en Santos a las 3 AM, Artur o con Lucho).
-   - Si es Enojo/Imprevisto/Ropa sucia/Discusión: Congelamiento táctico al primer segundo, respirar "como un león calmando su ira", construir el Ideal Adaptado (buscar la mejor opción real dentro de la imperfección) o Sabiduría de Retroceso con humildad (como en lo de Renán).
-   - Si es Rutina Matutina (6:45 AM): Levantarse antes de contar hasta 3 sin negociar, directo al baño, agua fría y audio Horus (10 min) para entrenar a las 7:30 AM con auriculares.
-   - Si es Estudio/Ingeniería (5:00 PM / avisos Discord): Apagar TV, celular en No Molestar, temporizador, atravesar los primeros 10-15 min aceptando que "es normal sentirse desorientado la primera vez, es puramente mecánico", ver 1 video de YouTube para el panorama general y resolver solo para cerrar a las 11:00 PM rumbo al título de ingeniero y portafolio.
-   - Si es Apatía/Día Complicado: Confrontar al demonio interno ("¿Si sabés que tenés el control, qué carajo estás haciendo?", "Sé que esto me costará, pero dejaré de hacerlo"), encender enojo constructivo y ejecutar la acción mínima para no quedar en Día Cero.
-3) VALORAR EL MÉTODO DE ÉXITO PREVIO: Cuando cites una experiencia negativa superada, destacá por qué el método que aplicó Juan esa vez funcionó y pedile que repita exactamente esa mecánica ahora.`;
-
-  return `Sos la voz más lúcida, persuasiva y despierta de Juan Francisco Cano. Hablás de vos a vos (voseo argentino directo, claro y firme).
+<telemetria_temporal_oficial>
+${telemetriaTemporal.telemetriaPromptTexto}
+</telemetria_temporal_oficial>
 
 <telemetria_horaria_real>
-Hora y franja actual del sistema: ${horaInfo}
+Hora actual: ${horaInfo}
 </telemetria_horaria_real>
 
 <instruccion_de_modo_activo>
 ${bloqueInstruccionPorModo}
 </instruccion_de_modo_activo>
 
-<detector_de_autoengano_e_instintos_primitivos>
-${MAPA_AUTOENGANO_E_INSTINTOS}
-</detector_de_autoengano_e_instintos_primitivos>
-
 <auditoria_objetivos_y_horarios>
-${params.auditoriaComoVamosTexto || "Auditoría disponible bajo demanda."}
+${params.auditoriaComoVamosTexto || "Sin reportes cargados todavía."}
 </auditoria_objetivos_y_horarios>
 
-<experiencias_del_arbol>
+<contexto_historico_solo_referencia_no_asumir>
+(IMPORTANTE: Esto ocurrió en días pasados. PROHIBIDO asumir que lo que le pasa hoy a Juan tiene esta misma causa. Usalo solo para conocer qué métodos le han servido):
 ${params.fichasCompactasTexto}
-</experiencias_del_arbol>
-
-<hecho_real_habilitado_en_este_turno>
-${params.hechoDosificadoTexto || "Usar experiencias de la auditoría o persuasión directa en presente."}
-</hecho_real_habilitado_en_este_turno>
+</contexto_historico_solo_referencia_no_asumir>
 
 <hilo_reciente>
 ${params.hiloRecienteTexto}
-</hilo_reciente>
-
-ESTRUCTURA DE SALIDA OBLIGATORIA:
-<analisis_contextual>
-- Modo y especificidad: [${modo}]
-- Autoengano o instinto detectado: [Qué excusa, gatillo o patrón horario está operando a las ${horaInfo}]
-- Enfoque elegido y metodo valorado: [Qué protocolo o caso de éxito propio se activa]
-</analisis_contextual>
-
-<consejo_tactico>
-[Tu respuesta directa en voseo argentino cumpliendo estrictamente el MODO ACTIVO EN ESTE TURNO.]
-</consejo_tactico>`;
+</hilo_reciente>`;
 }
 
 /**
- * Prefill obligatorio del asistente para forzar la apertura con <analisis_contextual>
- * eliminando saludos complacientes y activando el bloqueo contrastivo antes del consejo.
+ * Prefill vacío para permitir respuestas naturales, variadas y adaptadas a cada consulta
+ * sin forzar la muletilla repetitiva de autoengaño.
  */
-export const ASSISTANT_PREFILL_TAG = "<analisis_contextual>\n- Autoengano o instinto detectado:";
+export const ASSISTANT_PREFILL_TAG = "";
 
 /**
- * Parsea la salida estructurada (<analisis_contextual> + <consejo_tactico>)
- * y reconstruye tanto el bloque analítico como el mensaje limpio para la interfaz.
+ * Parsea la salida del modelo de forma limpia y natural.
  */
 export function parseRepairedTacticalOutput(
   rawOutput: string,
   ramaDetectada: RamaTematica,
-  prefillUsado = false
+  _prefillUsado = false
 ): {
   formattedMessage: string;
   tacticalAnalysis: TacticalAnalysisBlock;
 } {
-  const fullText = prefillUsado && !rawOutput.trim().startsWith("<analisis_contextual>")
-    ? `${ASSISTANT_PREFILL_TAG} ${rawOutput.trim()}`
-    : rawOutput.trim();
+  const fullText = rawOutput.trim();
 
   const analisisMatch = fullText.match(/<analisis_contextual>([\s\S]*?)<\/analisis_contextual>/i);
   const consejoMatch = fullText.match(/<consejo_tactico>([\s\S]*?)<\/consejo_tactico>/i);
 
-  const analisisRaw = analisisMatch ? analisisMatch[1].trim() : "";
   let consejoTactico = consejoMatch ? consejoMatch[1].trim() : "";
 
   if (!consejoTactico) {
-    // Si el modelo cerró </analisis_contextual> pero no puso tag de cierre en <consejo_tactico>
     const splitAfterAnalisis = fullText.split(/<\/analisis_contextual>/i);
     if (splitAfterAnalisis.length > 1) {
       consejoTactico = splitAfterAnalisis[1].replace(/<\/?consejo_tactico>/gi, "").trim();
     } else {
-      consejoTactico = fullText.replace(/<\/?analisis_contextual>/gi, "").replace(/<\/?consejo_tactico>/gi, "").trim();
+      consejoTactico = fullText
+        .replace(/<analisis_contextual>[\s\S]*?<\/analisis_contextual>/gi, "")
+        .replace(/<\/?analisis_contextual>/gi, "")
+        .replace(/<\/?consejo_tactico>/gi, "")
+        .trim();
     }
   }
 
-  const extractLine = (labelRegex: RegExp, fallback: string): string => {
-    const m = analisisRaw.match(labelRegex);
-    return m && m[1] ? m[1].trim() : fallback;
-  };
+  const analisisRaw = analisisMatch ? analisisMatch[1].trim() : "";
+  const fichasCitadas = Array.from(new Set(fullText.match(/VIV-[A-Z0-9-]+/g) || []));
 
-  const autoenganoOContinuidad = extractLine(
-    /-\s*(?:Autoengano\s*o\s*instinto\s*detectado|Continuidad(?:\s*y\s*cambio\s*de\s*enfoque)?|Modo\s*y\s*especificidad):\s*([^\n]+)/i,
-    "Evaluación directa sobre consulta activa."
-  );
-  const enfoqueElegido = extractLine(
-    /-\s*(?:Enfoque\s*elegido\s*y\s*(?:control\s*de\s*repeticion|metodo\s*valorado)|Consejo\s*gen[eé]rico\s*descartado):\s*([^\n]+)/i,
-    "Enfoque persuasivo en tiempo presente."
-  );
-  const patronDetectado = extractLine(
-    /-\s*(?:Patr[oó]n detectado|Ancla o modulo activado):\s*([^\n]+)/i,
-    `Cruce de mecanismo en rama ${ramaDetectada}.`
-  );
-
-  const fichasCitadas = Array.from(new Set((fullText.match(/VIV-[A-Z0-9-]+/g) || [])));
-
-  // Formato 100% natural para el usuario: solo el consejo táctico sin asteriscos ni encabezados
   const formattedMessage = consejoTactico
     .replace(/\*\*/g, "")
-    .replace(/\*/g, "")
-    .replace(/^[0-9]+\.\s*/gm, "")
-    .replace(/^[-•]\s*/gm, "")
     .trim();
 
   return {
     formattedMessage,
     tacticalAnalysis: {
-      continuidad: autoenganoOContinuidad,
-      consejoGenericoDescartado: enfoqueElegido,
-      patronDetectado,
-      consejoTactico,
+      continuidad: analisisRaw || "Análisis contextual adaptado al mensaje actual.",
+      consejoGenericoDescartado: "Sin asunciones de causas pasadas no mencionadas.",
+      patronDetectado: `Rama: ${ramaDetectada}`,
+      consejoTactico: formattedMessage,
       ramaDetectada,
       fichasCitadas,
     },

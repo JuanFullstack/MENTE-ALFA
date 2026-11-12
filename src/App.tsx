@@ -27,7 +27,8 @@ import {
   Decision,
   DailyReport,
   SistemaMentalData,
-  ObjetivoEstructurado
+  ObjetivoEstructurado,
+  ChatChannel
 } from "./types";
 import { clasificarFranjaHoraria, actualizarProgresoObjetivosConReporte } from "./lib/progressAuditor";
 import { 
@@ -50,8 +51,9 @@ export default function App() {
   // Session / Profile state
   const [profile, setProfile] = useState<UserProfile | null>(null);
   
-  // Navigation active tab
+  // Navigation active tab & active chat channel (Chat A: carga_datos vs Chat B: consultas)
   const [activeTab, setActiveTab] = useState<NavTab>("conversar");
+  const [activeChatChannel, setActiveChatChannel] = useState<ChatChannel>("carga_datos");
 
   // Modals state
   const [isQuickLogOpen, setIsQuickLogOpen] = useState(false);
@@ -352,6 +354,22 @@ export default function App() {
     createMemoriaPB(newMem);
   };
 
+  const handleSaveNewStrategy = (newStrat: Strategy) => {
+    const exists = strategies.some(
+      (s) => s.name.trim().toLowerCase() === newStrat.name.trim().toLowerCase()
+    );
+    if (exists) return;
+    const updated = [newStrat, ...strategies];
+    handleUpdateStrategies(updated);
+    createEstrategiaPB(newStrat);
+  };
+
+  const handleSaveNewPattern = (newPat: Pattern) => {
+    const updated = [newPat, ...patterns];
+    handleUpdatePatterns(updated);
+    createPatronPB(newPat);
+  };
+
   // Render Onboarding Screen if profile is not initialized
   if (!profile) {
     return <AuthScreen onLogin={handleUpdateProfile} currentProfile={ZenDB.getUserProfile()} />;
@@ -365,13 +383,9 @@ export default function App() {
       <TopNavbar
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        onOpenQuickLog={() => {
-          if (activeTab === "conversar") {
-            setAutoLoadDataTrigger((prev) => prev + 1);
-          } else {
-            setIsQuickLogOpen(true);
-          }
-        }}
+        activeChatChannel={activeChatChannel}
+        onSelectChatChannel={setActiveChatChannel}
+        onOpenQuickLog={() => setIsQuickLogOpen(true)}
         onOpenAddMemory={() => setIsAddMemoryOpen(true)}
         onRequestReport={handleRequestReportFromNavbar}
         profile={profile}
@@ -382,6 +396,8 @@ export default function App() {
         {activeTab === "conversar" && (
           <ChatView
             profile={profile}
+            activeChatChannel={activeChatChannel}
+            onChangeChatChannel={setActiveChatChannel}
             conversations={conversations}
             messages={messages}
             memories={memories}
@@ -399,6 +415,9 @@ export default function App() {
             onUpdateCurrentState={handleUpdateCurrentState}
             onUpdateDecisions={handleUpdateDecisions}
             onUpdateStrategies={handleUpdateStrategies}
+            onUpdatePatterns={handleUpdatePatterns}
+            onSaveNewStrategy={handleSaveNewStrategy}
+            onSaveNewPattern={handleSaveNewPattern}
             onSetActiveConvId={handleSetActiveConvId}
             onOpenQuickLog={() => setIsQuickLogOpen(true)}
             onOpenAddMemory={() => setIsAddMemoryOpen(true)}
@@ -443,6 +462,7 @@ export default function App() {
             onUpdateLogs={handleUpdateLogs}
             onUpdateDailyReports={handleUpdateDailyReports}
             onUpdateObjetivos={handleUpdateObjetivos}
+            onSaveNewStrategy={handleSaveNewStrategy}
           />
         )}
 

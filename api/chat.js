@@ -1,3 +1,200 @@
+// src/lib/dateTimeUtils.ts
+var TIMEZONE_ARGENTINA = "America/Argentina/Tucuman";
+var CONV_CARGA_DIARIA_ID = "conv-canal-cargas-diarias";
+function getLocalTucumanIsoDate(dateInput) {
+  const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE_ARGENTINA,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(d);
+}
+function getLocalTucumanTime(dateInput) {
+  const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
+  const timeStr = new Intl.DateTimeFormat("es-AR", {
+    timeZone: TIMEZONE_ARGENTINA,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(d);
+  const [hStr, mStr] = timeStr.split(":");
+  const hours = parseInt(hStr, 10) || 0;
+  const minutes = parseInt(mStr, 10) || 0;
+  return {
+    hours,
+    minutes,
+    horaExacta: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`
+  };
+}
+function getLocalTucumanFullDescription(dateInput) {
+  const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
+  return d.toLocaleDateString("es-AR", {
+    timeZone: TIMEZONE_ARGENTINA,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
+}
+function getTelemetriaTemporalCompleta(dateInput) {
+  const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
+  const fechaHoyIso = getLocalTucumanIsoDate(d);
+  const ayerDate = new Date(d.getTime() - 24 * 60 * 60 * 1e3);
+  const fechaAyerIso = getLocalTucumanIsoDate(ayerDate);
+  const fechaHoyDesc = getLocalTucumanFullDescription(d);
+  const fechaAyerDesc = getLocalTucumanFullDescription(ayerDate);
+  const { horaExacta } = getLocalTucumanTime(d);
+  const horaActualTexto = `${horaExacta} hs`;
+  const telemetriaPromptTexto = `\u2022 FECHA DE HOY: ${fechaHoyDesc} (ISO: ${fechaHoyIso})
+\u2022 FECHA DE AYER: ${fechaAyerDesc} (ISO: ${fechaAyerIso})
+\u2022 HORA ACTUAL: ${horaActualTexto} (San Miguel de Tucum\xE1n, Argentina)
+\u26A0\uFE0F REGLAS TEMPORALES ESTRICTAS:
+1. HOY es ${fechaHoyDesc} (${fechaHoyIso}).
+2. AYER fue ${fechaAyerDesc} (${fechaAyerIso}). PROHIBIDO decir que ayer fue otra fecha ni confundir hoy con ayer.
+3. Si el usuario te pide "resumen de ayer", "qu\xE9 hice ayer", "c\xF3mo me fue ayer" o "reporte de ayer", referite EXCLUSIVAMENTE a las cargas de AYER (${fechaAyerDesc}, ${fechaAyerIso}).
+4. Si el usuario te pide "resumen de hoy" o "c\xF3mo vengo hoy", referite a las cargas de HOY (${fechaHoyDesc}, ${fechaHoyIso}).`;
+  return {
+    fechaHoyIso,
+    fechaAyerIso,
+    fechaHoyDesc,
+    fechaAyerDesc,
+    horaActualTexto,
+    telemetriaPromptTexto
+  };
+}
+function sincronizarLogsConMensajesChatA(logs, allMessages = []) {
+  const merged = [...logs || []];
+  const idsExistentes = new Set(merged.map((l) => l.id));
+  const msgsConReporte = (allMessages || []).filter(
+    (m) => m.conversationId === CONV_CARGA_DIARIA_ID || Boolean(m.desgloseReporte)
+  );
+  for (const m of msgsConReporte) {
+    if (!m.desgloseReporte) continue;
+    const rep = m.desgloseReporte;
+    const fechaLog = getLocalTucumanIsoDate(m.createdAt);
+    const horaLog = rep.horaRegistrada || getLocalTucumanTime(m.createdAt).horaExacta;
+    const yaExiste = merged.some(
+      (l) => l.dateKey === fechaLog && l.horaExacta === horaLog || l.id === `log-msg-${m.id}`
+    );
+    if (!yaExiste) {
+      const nuevoLog = {
+        id: `log-msg-${m.id}`,
+        createdAt: m.createdAt,
+        dateKey: fechaLog,
+        horaExacta: horaLog,
+        energy: rep.variableSaludEnergia?.score ?? rep.energia ?? 7,
+        motivation: rep.variableAccion?.score ?? rep.productividad ?? 7,
+        stress: rep.estresPresion ?? 4,
+        moodScore: rep.variableAnimoEmociones?.score ?? rep.animo ?? 7,
+        productivityScore: rep.variableAccion?.score ?? rep.productividad ?? 7,
+        energiaMencionada: rep.seccionesInformadas?.saludEnergia ?? true,
+        animoMencionado: rep.seccionesInformadas?.animoEmociones ?? true,
+        accionMencionada: rep.seccionesInformadas?.accionTiempo ?? true,
+        patronMencionado: rep.seccionesInformadas?.patronObservado ?? false,
+        camposExtraidosReales: rep.camposExtraidosReales,
+        enCondiciones: rep.variableSaludEnergia?.enCondiciones ?? true,
+        desgasteAcumulado: rep.variableSaludEnergia?.desgasteDia,
+        emocionesDetectadas: rep.variableAnimoEmociones?.emocionesDetectadas,
+        manejoAutoimagen: rep.variableAnimoEmociones?.manejoAutoimagen,
+        sensacionesPrimitivas: rep.variableAnimoEmociones?.sensacionesPrimitivas,
+        estadosNegativos: rep.variableAnimoEmociones?.estadosNegativos,
+        respuestaEstadoNegativo: rep.variableAnimoEmociones?.respuestaAnteNegativo,
+        controloEmociones: rep.variableAnimoEmociones?.controloEmociones ?? "si",
+        tiempoProductivoMin: rep.variableAccion?.tiempoProductivoMin ?? 0,
+        tiempoDistraidoMin: rep.variableAccion?.tiempoDistraidoMin ?? 0,
+        tiempoRegulacionMin: rep.variableAccion?.tiempoRegulacionMin ?? 0,
+        actividadesDetalle: rep.variableAccion?.actividadesRealizadas,
+        actividadesNegativasDistraccion: rep.variableAccion?.actividadesNegativasDistraccion,
+        factoresContextuales: rep.patronesContexto?.factoresContextuales,
+        patronContextoResumen: rep.patronesContexto?.patronDetectado,
+        detonante: rep.friccionDetectada,
+        metodoAplicado: rep.metodoAplicado,
+        resultadoMetodo: rep.resultadoMetodo,
+        actividadRealizada: rep.datosOperativos?.actividadRealizada,
+        metasEspecificas: rep.metasEspecificas,
+        compromisoHorario: rep.compromisoHorario,
+        note: rep.resumenNota || m.text
+      };
+      merged.push(nuevoLog);
+      idsExistentes.add(nuevoLog.id);
+    }
+  }
+  return merged.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+function compilarHistorialCompletoCargas(logs, allMessages = []) {
+  const todosLosLogs = sincronizarLogsConMensajesChatA(logs, allMessages);
+  const hoyIso = getLocalTucumanIsoDate();
+  const ayerDate = new Date(Date.now() - 24 * 60 * 60 * 1e3);
+  const ayerIso = getLocalTucumanIsoDate(ayerDate);
+  const hoyDesc = getLocalTucumanFullDescription();
+  const ayerDesc = getLocalTucumanFullDescription(ayerDate);
+  const { horaExacta } = getLocalTucumanTime();
+  const logsHoy = todosLosLogs.filter((l) => (l.dateKey || getLocalTucumanIsoDate(l.createdAt)) === hoyIso);
+  const logsAyer = todosLosLogs.filter((l) => (l.dateKey || getLocalTucumanIsoDate(l.createdAt)) === ayerIso);
+  const formatearListaLogs = (items) => {
+    return items.map((l, idx) => {
+      const hora = l.horaExacta || getLocalTucumanTime(l.createdAt).horaExacta;
+      const partes = [];
+      if (l.camposExtraidosReales && l.camposExtraidosReales.length > 0) {
+        partes.push(l.camposExtraidosReales.map((c) => `${c.etiqueta}: ${c.valor}`).join(" | "));
+      } else {
+        if (l.actividadRealizada) partes.push(`Actividad: ${l.actividadRealizada}`);
+        if (l.note && !l.actividadRealizada) partes.push(`Dato: ${l.note.slice(0, 100)}`);
+        if (l.energiaMencionada !== false) partes.push(`Salud/Energ\xEDa: ${l.energy}/10`);
+        if (l.animoMencionado !== false && (l.moodScore || l.estadoPsicologicoEtiqueta)) {
+          partes.push(`\xC1nimo: ${l.moodScore ?? l.energy}/10 (${l.estadoPsicologicoEtiqueta || "Estable"})`);
+        }
+        if (l.metodoAplicado && l.metodoAplicado !== "Ninguno registrado") {
+          partes.push(`M\xE9todo aplicado: ${l.metodoAplicado} (${l.resultadoMetodo || "exito"})`);
+        }
+      }
+      if (typeof l.tiempoProductivoMin === "number" && l.tiempoProductivoMin > 0) {
+        partes.push(`Tiempo productivo: ${l.tiempoProductivoMin} min`);
+      }
+      if (typeof l.tiempoDistraidoMin === "number" && l.tiempoDistraidoMin > 0) {
+        partes.push(`Tiempo distra\xEDdo: ${l.tiempoDistraidoMin} min`);
+      }
+      if (typeof l.tiempoRegulacionMin === "number" && l.tiempoRegulacionMin > 0) {
+        partes.push(`Regulaci\xF3n: ${l.tiempoRegulacionMin} min`);
+      }
+      return `  ${idx + 1}. [${hora} hs] ${partes.join(" | ") || l.note}`;
+    }).join("\n");
+  };
+  let bloqueAyer = "";
+  if (logsAyer.length > 0) {
+    const totalProdAyer = logsAyer.reduce((acc, l) => acc + (l.tiempoProductivoMin ?? 0), 0);
+    const totalDistAyer = logsAyer.reduce((acc, l) => acc + (l.tiempoDistraidoMin ?? 0), 0);
+    const totalRegAyer = logsAyer.reduce((acc, l) => acc + (l.tiempoRegulacionMin ?? 0), 0);
+    bloqueAyer = `CARGAS REGISTRADAS DE AYER (${ayerDesc} \xB7 ISO: ${ayerIso}):
+\u2022 Total de reportes cargados ayer: ${logsAyer.length}
+\u2022 Tiempo productivo total acumulado ayer: ${totalProdAyer} min | Distra\xEDdo: ${totalDistAyer} min | Regulaci\xF3n: ${totalRegAyer} min
+DETALLE DE CARGAS DE AYER:
+${formatearListaLogs(logsAyer)}
+ESTADO: Juan SI report\xF3 ayer durante el d\xEDa (${logsAyer.length} cargas registradas). Si te pide "resumen de ayer", us\xE1 estos datos reales.`;
+  } else {
+    bloqueAyer = `CARGAS REGISTRADAS DE AYER (${ayerDesc} \xB7 ISO: ${ayerIso}):
+\u2022 No se encontraron registros de cargas para el d\xEDa de ayer (${ayerIso}).`;
+  }
+  let bloqueHoy = "";
+  if (logsHoy.length > 0) {
+    const totalProdHoy = logsHoy.reduce((acc, l) => acc + (l.tiempoProductivoMin ?? 0), 0);
+    const totalDistHoy = logsHoy.reduce((acc, l) => acc + (l.tiempoDistraidoMin ?? 0), 0);
+    const totalRegHoy = logsHoy.reduce((acc, l) => acc + (l.tiempoRegulacionMin ?? 0), 0);
+    bloqueHoy = `CARGAS REGISTRADAS DE HOY (${hoyDesc} \xB7 Hora actual: ${horaExacta} hs \xB7 ISO: ${hoyIso}):
+\u2022 Total de reportes cargados hoy: ${logsHoy.length}
+\u2022 Tiempo productivo hoy: ${totalProdHoy} min | Distra\xEDdo: ${totalDistHoy} min | Regulaci\xF3n: ${totalRegHoy} min
+DETALLE DE CARGAS DE HOY:
+${formatearListaLogs(logsHoy)}`;
+  } else {
+    bloqueHoy = `CARGAS REGISTRADAS DE HOY (${hoyDesc} \xB7 Hora actual: ${horaExacta} hs \xB7 ISO: ${hoyIso}):
+\u2022 La jornada de hoy reci\xE9n comienza (${horaExacta} hs); todav\xEDa no se han cargado reportes en el d\xEDa de hoy. (NO considerar esto como silencio operativo ni como fallo).`;
+  }
+  return `${bloqueAyer}
+
+${bloqueHoy}`;
+}
+
 // src/lib/baseContext.ts
 var GUIAS_BASE_POR_RAMA = {
   proyectos: `RAMA ACTIVA: PROYECTOS / C\xD3DIGO / INGENIER\xCDA (Juan Francisco Cano, Tucum\xE1n)
@@ -480,199 +677,194 @@ function obtenerHechoDosificadoSinRepetir(messages, textoUsuario) {
   }
   return `[OPCIONAL - SOLO USAR SI APORTA FUERZA Y CON NATURALIDAD]: ${elegido.relato_corto}`;
 }
-var MAPA_AUTOENGANO_E_INSTINTOS = `
-COMO DETECTAR CUANDO LA MENTE O LOS INSTINTOS PRIMITIVOS ENGANAN A JUAN SIN QUE SE DE CUENTA:
-
-1. EL ENGANO DEL "PERMITIDO CORTO" Y LA POSTERGACION ("Un video mas", "Despues de esta partida", "Ya es tarde, manana arranco temprano"):
-   - Como te engana la mente: Te hace creer que estas eligiendo descansar "5 minutos" o que "manana con la mente fresca vas a rendir mejor", cuando en realidad es ese impulso interno que te adormece para escapar de los primeros 10 minutos incomodos de una tarea o examen.
-   - Como destrabarlo (Narracion de Disciplina Real):
-     * Desenmascarar la voz permisiva en el acto: "Todo tiene su momento".
-     * Recordar que solo los primeros 10 o 15 minutos dan resistencia; una vez que arrancas ("primero esto, despues lo otro"), el ritmo fluye solo.
-     * Las pausas y series no se prohiben, se miden con temporizador y se cortan a horario para dormir a las 11 y levantarse al sonar la alarma sin esperar a tener ganas.
-
-2. EL ENGANO DE LA IRRITACION POR EL ESCENARIO IMPERFECTO (Caso "No tengo ropa 15 min antes de salir" o "Se cayo el plan del sabado"):
-   - Como te engana la mente: Te hace sentir bronca, ansiedad o ganas de mandar todo al diablo porque la ropa te queda mal, esta sucia o tus amigos cancelaron, haciendote creer que el problema es la ropa o el plan. En realidad, el instinto primitivo buscaba lucirse, recibir aprobacion externa o controlar un escenario ideal.
-   - Como destrabarlo (Buscar lo ideal dentro de la imperfeccion):
-     * Parar, mirar hacia adentro, respirar lento y quitarle toda importancia a la sensacion primitiva: "Las cosas solo me afectan si yo les doy importancia; yo decido que es relevante y que ignorar".
-     * Soltar el plan rigido y buscar la mejor opcion real dentro de lo que hay hoy: ir con la mejor ropa que tengas a mano porque tu tranquilidad vale mas que impresionar, o si estas agotado un sabado y todo salio al reves, elegir descansar en paz para ganar la manana siguiente en vez de forzar la salida con mala energia.
-
-3. EL ENGANO DE LA EXPLOSION REACTIVA EN CALIENTE (Caso "Cansado y te provocan o insultan"):
-   - Como te engana la mente: Cuando estas agotado y alguien se enoja por una tonteria, el instinto primitivo te empuja a explotar creyendo que asi te defendes, dejandote contaminado y frustrado.
-   - Como destrabarlo (Respiracion del Leon):
-     * Apenas sube el calor del enojo, congelar todo: dejar de escuchar la provocacion, no responder en caliente y respirar lento como un leon calmando su ira.
-     * Volverte inmune desde adentro filtrando lo irrelevante: vos elegis que te afecta y cuando avanzar o retroceder.
-
-4. EL ENGANO DE ESPERAR CONDICIONES O GANAS IDEALES (En estudio, orden, interaccion social o entrenamiento):
-   - Como te engana la mente: Te dice que necesitas "sentir ganas", "estar inspirado" o "tener todo claro" antes de entrenar, ordenar un desastre o hablarle a alguien en un boliche.
-   - Como destrabarlo:
-     * En el desorden o estudio: empezar a ordenar o ver el panorama general sin hacer juicios de valor ("que desastre todo lo que falta"), simplificando cada paso hasta que aparezca esa energia calida de concentracion.
-     * En el entrenamiento: no verlo como un castigo ni esperar a tener que demostrar nada; poner musica, empezar a calentar despacio adaptandolo a lo que hoy es posible y disfrutar de estar cuidando el cuerpo, sabiendo que con cada repeticion suben las ganas y la fuerza.
-     * En lo social: no esperar reacciones ni resultados; acercarte con una pregunta simple y casual solo por practicar y divertirte, siendo un alma libre a la que le da igual si sale bien o mal.
-`;
-function evaluarModoInteraccion(textoUsuario, historialReciente = []) {
-  const txt = (textoUsuario || "").trim().toLowerCase();
+function evaluarSuficienciaContexto(textoUsuario, historialReciente = []) {
+  const txt = (textoUsuario || "").trim();
+  const txtLower = txt.toLowerCase();
   const palabras = txt.split(/\s+/).filter(Boolean);
-  const regexComoVamos = /(como vamos|cómo vamos|como venimos|cómo venimos|cumpliendo los objetivos|mis objetivos|en que estoy fallando|en qué estoy fallando|dame un reporte|evaluame|evalúame|balance de la semana|balance del mes)/i;
-  if (regexComoVamos.test(txt)) {
+  const regexConsultaDatos = /(reportes?\s+de\s+la\s+semana|reportes?\s+del\s+mes|dame\s+los?\s+reportes?|como\s+voy|cómo\s+voy|como\s+vamos|cómo\s+vamos|como\s+venimos|cómo\s+venimos|mis\s+objetivos|cumpliendo\s+los\s+objetivos|estad[ií]sticas|m[eé]tricas|resumen\s+semanal|resumen\s+mensual|resumen\s+anual|cu[aá]nto\s+tiempo|controlando\s+el\s+tiempo|distribuci[oó]n\s+de\s+actividades|resumen\s+de\s+ayer|reporte\s+de\s+ayer|qu[eé]\s+hice\s+ayer|c[oó]mo\s+me\s+fue\s+ayer|resumen\s+de\s+hoy|reporte\s+de\s+hoy|qu[eé]\s+hice\s+hoy|c[oó]mo\s+vengo\s+hoy|c[oó]mo\s+me\s+fue\s+hoy|resumen\s+del\s+d[ií]a|reporte\s+del\s+d[ií]a|cargas?\s+de\s+ayer|cargas?\s+de\s+hoy|ayer\s+fue\s+\d+|hoy\s+es\s+\d+|contame\s+un\s+resumen|qu[eé]\s+pas[oó]\s+ayer)/i;
+  if (regexConsultaDatos.test(txtLower)) {
     return {
-      modo: "auditoria_como_vamos",
-      motivo: "El usuario solicit\xF3 auditor\xEDa de cumplimiento de objetivos, horarios de reporte, fallos y valoraci\xF3n de m\xE9todos exitosos."
+      contextoSuficiente: true,
+      esConsultaDatosObjetivos: true,
+      yaInformado: ["Solicitud directa de reportes, m\xE9tricas y avance de objetivos"],
+      faltanteParaIndagar: [],
+      resumenContextoDetectado: "Consulta objetiva de reportes y objetivos (NO es consulta psicol\xF3gica)."
     };
   }
-  const tieneIndiciosHorarios = /(?:son las|a las|tipo \d+|mediod[ií]a|durante la mañana|en la tarde|\d{1,2}:\d{2}|\d{1,2} y \d{2})\b/i.test(txt);
-  const tieneIndiciosEstadoOAccion = /(?:mi estado|energ[ií]a|desganado|desgano|tranquilo|positivo|presionado|presi[oó]n|foco|productiv|meditaci[oó]n|avanzar|estudiar|unidad|compromiso|promet[ií]|fogaje|cosas intermedia)/i.test(txt);
-  if (tieneIndiciosHorarios && tieneIndiciosEstadoOAccion) {
+  const ultimosUser = (historialReciente || []).filter((m) => m.sender === "user" || m.role === "user").slice(-2).map((m) => (m.text || m.content || "").toLowerCase());
+  const textoAcumuladoHilo = [...ultimosUser, txtLower].join(" ");
+  const ultimoAsistente = [...historialReciente || []].reverse().find((m) => m.sender === "assistant" || m.role === "assistant");
+  const asistenteYaIndago = Boolean(ultimoAsistente) && (ultimoAsistente?.text || ultimoAsistente?.content || "").includes("?");
+  const yaInformado = [];
+  const faltanteParaIndagar = [];
+  if (/(estudi|unidad|tesis|program|c[oó]digo|app|trabaj|entren|gimnasio|leer|leyendo|haciendo|intentando|rindiendo|examen|pr[aá]ctico|limpi|orden|salir|hablar|reuni[oó]n)/i.test(
+    textoAcumuladoHilo
+  )) {
+    yaInformado.push("Acci\xF3n/Actividad que estaba realizando o por realizar");
+  } else {
+    faltanteParaIndagar.push("Qu\xE9 actividad o acci\xF3n estaba haciendo (o intentando hacer)");
+  }
+  if (/(\d{1,2}:\d{2}|son las|a las|desde las|hace \d+|durante \d+|\d+\s*horas?|\d+\s*min|mañana|tarde|noche|mediod[ií]a|dorm[ií]|despert[eé]|toda la mañana|todo el d[ií]a)/i.test(
+    textoAcumuladoHilo
+  )) {
+    yaInformado.push("Momento del d\xEDa, horario o tiempo de esfuerzo/sue\xF1o previo");
+  } else {
+    faltanteParaIndagar.push("Desde qu\xE9 hora viene con esto o cu\xE1ntas horas de esfuerzo/sue\xF1o acumula hoy");
+  }
+  if (/(porque|por que|debido a|ya que|pasa que|pas[oó] que|resulta que|me dijeron|sali[oó] mal|complicado|dif[ií]cil|nuevo|no entiendo|rechazo|discut|pelea|imprevisto|fogaje)/i.test(
+    textoAcumuladoHilo
+  )) {
+    yaInformado.push("Causa o hecho puntual que dispar\xF3 la situaci\xF3n");
+  } else {
+    faltanteParaIndagar.push("Si ocurri\xF3 alg\xFAn hecho puntual, tema dif\xEDcil o interacci\xF3n con alguien que lo dispar\xF3");
+  }
+  if (/(casa|habitaci[oó]n|escritorio|cama|facultad|gimnasio|calle|bar|oficina|con mi|con un|gente|amigo|familia|profesor|mentor|compañero)/i.test(
+    textoAcumuladoHilo
+  )) {
+    yaInformado.push("Lugar, entorno o personas involucradas");
+  } else {
+    faltanteParaIndagar.push("En qu\xE9 lugar est\xE1 o si hubo otras personas involucradas");
+  }
+  const contextoSuficiente = asistenteYaIndago || yaInformado.length >= 2 || palabras.length >= 22;
+  return {
+    contextoSuficiente,
+    esConsultaDatosObjetivos: false,
+    yaInformado,
+    faltanteParaIndagar,
+    resumenContextoDetectado: contextoSuficiente ? `Contexto suficiente (${yaInformado.join("; ")}).` : `Contexto insuficiente. Ya inform\xF3: [${yaInformado.join(", ") || "solo el estado general"}]. Falta indagar: [${faltanteParaIndagar.slice(0, 2).join(", ")}].`
+  };
+}
+function evaluarModoInteraccion(textoUsuario, historialReciente = []) {
+  const evalCtx = evaluarSuficienciaContexto(textoUsuario, historialReciente);
+  if (evalCtx.esConsultaDatosObjetivos) {
     return {
-      modo: "reporte_operativo_checkin",
-      motivo: "El usuario envi\xF3 un reporte operativo / check-in detallado con horas, estado bioemocional, m\xE9todos aplicados o metas de estudio."
+      modo: "consulta_reportes_objetivos",
+      motivo: "El usuario consulta datos objetivos de sus reportes, tiempos o avance de objetivos (no es consulta psicol\xF3gica).",
+      evaluacionContexto: evalCtx
     };
   }
-  const ultimoMensajeAsistente = [...historialReciente].reverse().find((m) => m.sender === "assistant" || m.role === "assistant");
-  const asistentePreguntoRecien = ultimoMensajeAsistente && (ultimoMensajeAsistente.text || ultimoMensajeAsistente.content || "").includes("?");
-  const tieneContextoEspecifico = /(tesis|facet|fisica|física|codigo|código|sql|examen|discord|lol|juego|alarma|6:45|7:30|entreno|gimnasio|boliche|santos|artur|bar|chica|mujer|renan|renán|ropa|reunion|reunión|ingles|inglés)/i.test(txt);
-  if (palabras.length <= 9 && !tieneContextoEspecifico && !asistentePreguntoRecien) {
+  if (!evalCtx.contextoSuficiente) {
     return {
-      modo: "sondeo_contexto_vago",
-      motivo: "El mensaje es breve/vago y no especifica si el detonante es psicol\xF3gico o productivo, por qu\xE9 importa ahora o el nivel de energ\xEDa."
+      modo: "indagacion_contexto_inteligente",
+      motivo: evalCtx.resumenContextoDetectado,
+      evaluacionContexto: evalCtx
     };
   }
   return {
-    modo: "consejo_tactico_directo",
-    motivo: "El mensaje contiene contexto suficiente para desenmascarar el autoenga\xF1o y prescribir el protocolo exacto."
+    modo: "consulta_con_contexto_suficiente",
+    motivo: evalCtx.resumenContextoDetectado,
+    evaluacionContexto: evalCtx
   };
 }
 function buildRepairedSystemPrompt(params) {
-  const modo = params.modoInteraccion || "consejo_tactico_directo";
-  const horaInfo = params.horaActualTexto || (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const bloqueInstruccionPorModo = modo === "sondeo_contexto_vago" ? `MODO ACTIVO EN ESTE TURNO: [1. SONDEO CONTEXTUAL QUIR\xDARGICO ANTE MENSAJE VAGO]
-Juan acaba de enviar un mensaje corto o vago (como "estoy mal", "me siento trabado" o "no tengo ganas") sin explicar el detonante ni el contexto.
-- PROHIBIDO adivinar qu\xE9 le pasa o lanzarle un discurso largo a ciegas.
-- Respond\xE9 en UN SOLO P\xC1RRAFO CORTO (m\xE1ximo 3 a 4 l\xEDneas):
-  1) Mencion\xE1 con naturalidad la hora actual (${horaInfo}) para anclar el momento del d\xEDa.
-  2) Hacele exactamente 2 preguntas directas y cortas para destrabar el contexto y registrar el patr\xF3n horario:
-     \u2022 \xBFQu\xE9 hecho puntual pas\xF3 reci\xE9n (viene por el lado de estudio/productividad o por algo social/personal)?
-     \u2022 \xBFQu\xE9 objetivo o tarea importante del d\xEDa te est\xE1 frenando esto ahora mismo y c\xF3mo est\xE1s de energ\xEDa f\xEDsica del 1 al 10?` : modo === "carga_datos_momento" ? `MODO ACTIVO EN ESTE TURNO: [5. CONFIRMACI\xD3N DE CARGA DE DATOS EN EL D\xCDA (OPTIMIZADO PARA MOBILE)]
-Juan acaba de cargar informaci\xF3n de este momento del d\xEDa (${horaInfo}) desde el celular.
-DATOS YA SEPARADOS Y GUARDADOS EN EL SISTEMA:
-${params.desgloseReporteTexto || "Datos operativos y aspecto psicol\xF3gico registrados."}
+  const modo = params.modoInteraccion || "consulta_con_contexto_suficiente";
+  const telemetriaTemporal = getTelemetriaTemporalCompleta();
+  const horaInfo = params.horaActualTexto || `${telemetriaTemporal.horaActualTexto} (San Miguel de Tucum\xE1n, Argentina)`;
+  const evalCtx = params.evaluacionContexto;
+  const reglasCriticasAntiErrores = `REGLAS CR\xCDTICAS INQUEBRANTABLES (PROHIBIDO VIOLARLAS):
+1. REGLA TEMPORAL INMUTABLE (FECHA Y D\xCDA REAL - PROHIBIDO CONFUNDIR HOY CON AYER):
+   - HOY es ${telemetriaTemporal.fechaHoyDesc} (ISO: ${telemetriaTemporal.fechaHoyIso}).
+   - AYER fue ${telemetriaTemporal.fechaAyerDesc} (ISO: ${telemetriaTemporal.fechaAyerIso}).
+   - PROHIBIDO decir que ayer fue hoy (${telemetriaTemporal.fechaHoyDesc}) o cualquier otra fecha.
+   - Si Juan consulta "resumen de ayer", "qu\xE9 hice ayer", "c\xF3mo me fue ayer" o "reporte de ayer", us\xE1 EXCLUSIVAMENTE los datos registrados de AYER (${telemetriaTemporal.fechaAyerDesc}) que est\xE1n en <auditoria_objetivos_y_horarios>.
+   - Si Juan consulta "resumen de hoy" o "c\xF3mo vengo hoy", referite a las cargas de HOY (${telemetriaTemporal.fechaHoyDesc}).
+   - PROHIBIDO decir que Juan tuvo 0 reportes o "silencio operativo" si en <auditoria_objetivos_y_horarios> figuran cargas registradas.
+2. PROHIBIDO USAR PLANTILLAS GEN\xC9RICAS, RESPUESTAS LARGAS O LA MISMA ESTRUCTURA SIEMPRE:
+   - S\xE9 breve, directo y natural. No uses siempre el mismo esquema ni repitas f\xF3rmulas.
+   - Adapt\xE1 el formato y extensi\xF3n estrictamente a lo que Juan plantea en este mensaje.
+3. PROHIBIDO ASUMIR O ADIVINAR LO QUE JUAN NO DIJO EN SU MENSAJE ACTUAL:
+   - Atend\xE9 \xFAnicamente la informaci\xF3n que Juan te da ahora.
+   - NO autocompletes estados emocionales, niveles de energ\xEDa ni causas que \xE9l no mencion\xF3.
+4. PROHIBIDO QUEDARSE PEGADO A REPORTES ANTERIORES DEL D\xCDA (EJ. "ME LEVANT\xC9 CANSADO"):
+   - Si a primera hora Juan report\xF3 que se levant\xF3 cansado (o cualquier otro estado previo), NO asumas que sigue cansado ahora. Los estados cambian durante el d\xEDa. Guiate exclusivamente por su mensaje actual.
+5. PROHIBIDO PREGUNTAR ALGO QUE JUAN YA DIJO EN SU MENSAJE:
+   - Lo que ya inform\xF3 en su mensaje: ${evalCtx?.yaInformado?.length ? evalCtx.yaInformado.join(" | ") : "Revisar texto del usuario"}.
+   - Nunca le vuelvas a preguntar un dato que ya te acaba de dar.`;
+  const bloqueInstruccionPorModo = modo === "consulta_reportes_objetivos" || modo === "auditoria_como_vamos" || modo === "reporte_con_consejos" ? `MODO ACTIVO: [CONSULTA OBJETIVA DE REPORTES, RES\xDAMENES Y OBJETIVOS]
+Juan est\xE1 haciendo una consulta sobre sus reportes, sus d\xEDas (ayer, hoy, la semana), sus tiempos o c\xF3mo viene con sus objetivos.
+- CLARAMENTE NO ES UNA CONSULTA PSICOL\xD3GICA: PROHIBIDO psicologizar, interrogar o decirle "tu mente te enga\xF1a".
+- PROHIBIDO DECIR QUE NO TIENES REGISTROS O QUE HUBO "SILENCIO OPERATIVO" SI EN <auditoria_objetivos_y_horarios> APARECEN CARGAS REGISTRADAS.
+- SI PREGUNTA POR AYER ("resumen de ayer", "qu\xE9 hice ayer", etc.):
+  * Referite expl\xEDcitamente a AYER (${telemetriaTemporal.fechaAyerDesc}, ${telemetriaTemporal.fechaAyerIso}).
+  * Dale un resumen estructurado con sus datos reales de ayer:
+    1) Total de reportes y momentos en que carg\xF3.
+    2) Actividades principales registradas y balance de tiempos (productivo vs. distra\xEDdo vs. regulaci\xF3n).
+    3) Nivel de energ\xEDa y \xE1nimo registrados.
+    4) M\xE9todos reguladores aplicados (ej. meditaci\xF3n, Yo Robot, etc.) y resultados.
+- SI PREGUNTA POR HOY ("resumen de hoy", "c\xF3mo vengo hoy", etc.):
+  * Referite a HOY (${telemetriaTemporal.fechaHoyDesc}, ${telemetriaTemporal.fechaHoyIso}).
+  * Resum\xED las cargas del d\xEDa hasta la hora actual (${telemetriaTemporal.horaActualTexto}). Si reci\xE9n empieza el d\xEDa, decilo sin alarmismos.
+- SI PREGUNTA POR OBJETIVOS O RENDIMIENTO SEMANAL/MENSUAL:
+  * Mostr\xE1 el progreso num\xE9rico de sus objetivos activos y cumplimiento en base a la auditor\xEDa.` : modo === "indagacion_contexto_inteligente" || modo === "sondeo_contexto_vago" ? `MODO ACTIVO: [INDAGACI\xD3N INTELIGENTE DE CONTEXTO PARA IDENTIFICAR DETONANTES Y PATRONES]
+Juan envi\xF3 una consulta breve donde todav\xEDa falta contexto para saber la causa real (ej. si es cansancio f\xEDsico real vs. un detonante situacional).
+- Lo que Juan YA dijo en su mensaje (PROHIBIDO volver a preguntarlo): ${evalCtx?.yaInformado?.join(", ") || "Solo mencion\xF3 su estado general"}.
+- Lo que FALTA saber para entender el contexto: ${evalCtx?.faltanteParaIndagar?.slice(0, 2).join(" y ") || "Actividad actual, lugar/hora o si hubo alg\xFAn detonante"}.
+- INSTRUCCI\xD3N DE RESPUESTA:
+  1) Respond\xE9 con naturalidad y empat\xEDa anal\xEDtica en 3 a 5 l\xEDneas m\xE1ximo, sin discursos prefabricados.
+  2) Valid\xE1 que lo que siente puede deberse tanto a desgaste/cansancio real del d\xEDa como a alg\xFAn factor del momento.
+  3) Hacele solo 1 o 2 preguntas puntuales sobre lo que FALTA saber (por ejemplo: qu\xE9 actividad estabas haciendo o por empezar, c\xF3mo ven\xEDs de esfuerzo/sue\xF1o hoy, en qu\xE9 lugar est\xE1s o si pas\xF3 algo puntual con alguien/algo que sali\xF3 mal) para ayudarlo a detectar si hay un detonante o patr\xF3n.` : modo === "carga_datos_momento" || modo === "reporte_operativo_checkin" ? `MODO ACTIVO: [CONFIRMACI\xD3N DE CARGA DESGLOSADA EN BASE DE DATOS]
+Confirm\xE1 de manera clara y concisa el desglose enviado a la Base de Datos en las 3 Variables Clave:
+${params.desgloseReporteTexto || "Datos registrados en la Base de Datos."}` : `MODO ACTIVO: [CONSULTA CON CONTEXTO SUFICIENTE \u2014 AN\xC1LISIS Y ESTRATEGIA A MEDIDA]
+Juan ya dio contexto suficiente en su mensaje (${evalCtx?.yaInformado?.join(", ") || "Contexto detallado"}).
+- NO le hagas un interrogatorio innecesario porque el contexto ya alcanza para ayudarlo.
+- Analiz\xE1 espec\xEDficamente la situaci\xF3n que acaba de describir en su mensaje actual (sin mezclar ni asumir causas de otros d\xEDas).
+- Ayudalo a identificar:
+  1) Si lo que describe responde a fatiga biol\xF3gica real (Salud y Energ\xEDa) o a una fricci\xF3n situacional/emocional (tema complejo, algo nuevo, autoexigencia, respuesta de otros).
+  2) Qu\xE9 m\xE9todo regulador o acci\xF3n concreta le conviene aplicar ahora mismo seg\xFAn su nivel de energ\xEDa real.
+  3) Si aplica pero sin asumir nada como hecho, pod\xE9s cerrar con una sola pregunta breve para confirmar si nota alg\xFAn patr\xF3n con la hora o el tipo de actividad.`;
+  return `Sos el analista y consultor personal de Juan Francisco Cano. Habl\xE1s en espa\xF1ol rioplatense (voseo natural, claro, directo, sin clich\xE9s ni frases repetitivas).
 
-INSTRUCCIONES DE RESPUESTA (BREVE, CLARA Y SEPARADA PARA LECTURA R\xC1PIDA EN CELULAR):
-Respond\xE9 en m\xE1ximo 2 p\xE1rrafos cortos separando n\xEDtidamente:
-1) [DATOS CARGADOS (${horaInfo})]: Confirm\xE1 qu\xE9 actividad operativa, metas (ej. unidades/tareas) y ventana horaria o compromiso quedaron registrados en la l\xEDnea del d\xEDa, advirtiendo en una frase si hubo desv\xEDo/fogaje.
-2) [ESTADO PSICOL\xD3GICO]: Confirm\xE1 c\xF3mo qued\xF3 asentado su estado mental (energ\xEDa, \xE1nimo, presi\xF3n) y valid\xE1 el m\xE9todo de regulaci\xF3n aplicado, dej\xE1ndolo libre para seguir su bloque o pedir el Reporte con Consejos cuando lo necesite.` : modo === "reporte_con_consejos" || modo === "auditoria_como_vamos" ? `MODO ACTIVO EN ESTE TURNO: [3. REPORTE INTEGRAL DEL D\xCDA CON CONSEJOS (SEPARANDO DATOS OPERATIVOS VS PSICOLOG\xCDA)]
-Juan presion\xF3 el bot\xF3n para pedir un REPORTE CON CONSEJOS basado en las cargas que fue haciendo en los distintos momentos del d\xEDa (${horaInfo}).
-Basate ESTRICTAMENTE en <auditoria_objetivos_y_horarios> y en los registros cargados hoy, y estructur\xE1 tu respuesta separando claramente estos 3 bloques:
+${reglasCriticasAntiErrores}
 
-BLOQUE 1 - BALANCE DE CARGA DE DATOS (OPERATIVO Y HORARIOS):
-- Recorr\xE9 las cargas realizadas en los diferentes momentos de hoy (horarios, qu\xE9 actividades o unidades avanz\xF3, qu\xE9 metas declar\xF3, compromisos horarios y puntos ciegos si falt\xF3 reportar alguna franja).
-- Marc\xE1 el progreso num\xE9rico real en sus Objetivos Productivos y si hubo desv\xEDo en tareas intermedias ("fogaje").
-
-BLOQUE 2 - DIAGN\xD3STICO PSICOL\xD3GICO (ESTADO, AUTOENGA\xD1O Y M\xC9TODOS):
-- Analiz\xE1 por separado su evoluci\xF3n emocional hoy (energ\xEDa, \xE1nimo, foco, presi\xF3n por el reloj) y el avance en sus Objetivos Psicol\xF3gicos.
-- Desenmascar\xE1 cualquier autoenga\xF1o o fricci\xF3n mental detectada hoy y VALOR\xC1 expl\xEDcitamente los m\xE9todos psicol\xF3gicos/biol\xF3gicos que aplic\xF3 con \xE9xito (ej. meditaci\xF3n de 12 min, agua fr\xEDa y audio Horus, respiraci\xF3n del le\xF3n, tolerar 15 min de confusi\xF3n o Ideal Adaptado).
-
-BLOQUE 3 - CONSEJO T\xC1CTICO Y TIME-BOXING INMEDIATO (${horaInfo}):
-- Dale un plan de ataque concreto por bloques de tiempo (Time-Boxing con reloj en mano) para la ventana horaria disponible ahora mismo, uniendo la mec\xE1nica operativa con el decreto psicol\xF3gico exacto.` : modo === "reporte_operativo_checkin" ? `MODO ACTIVO EN ESTE TURNO: [4. RECEPCI\xD3N Y DESGLOSE DE REPORTE OPERATIVO / CHECK-IN SEPARADO]
-Juan acaba de enviar un reporte de avance y estado de su jornada (${horaInfo}).
-DATOS YA REGISTRADOS EN EL SISTEMA:
-${params.desgloseReporteTexto || "M\xE9tricas, m\xE9todo exitoso y metas de estudio asentadas en ZenDB y PocketBase."}
-
-INSTRUCCIONES CLAVE DE RESPUESTA (SEPARANDO DATOS OPERATIVOS DE LO PSICOL\xD3GICO):
-1) SOBRE LA CARGA DE DATOS OPERATIVOS:
-   Confirm\xE1 qu\xE9 datos operativos quedaron asentados (horario exacto, actividad hecha, metas como Unidad 5 y 7, y compromiso horario) y fren\xE1 de ra\xEDz cualquier desv\xEDo en tareas secundarias ("fogaje" / mejoras de la app fuera de hora).
-2) SOBRE EL ASPECTO PSICOL\xD3GICO:
-   Separadamente, evalu\xE1 su estado interno (energ\xEDa, \xE1nimo, presi\xF3n por el reloj) y valor\xE1 con frialdad de ingeniero el m\xE9todo de regulaci\xF3n que aplic\xF3 con \xE9xito (ej. meditaci\xF3n de 12 min a las 10:30 hs para cortar el desgano).
-3) CONSEJO T\xC1CTICO POR BLOQUES (TIME-BOXING):
-   Armale un plan t\xE1ctico con el reloj en mano para la ventana exacta disponible antes de su compromiso (ej. Bloque 1 de 75 min para Unidad 5 -> Pausa de 5 min agua fr\xEDa/respiraci\xF3n de le\xF3n -> Bloque 2 de 60 min para Unidad 7 -> Cierre limpio).` : `MODO ACTIVO EN ESTE TURNO: [2. CONSEJO T\xC1CTICO DIRECTO CON GU\xCDA PR\xC1CTICA]
-1) DESENMASCARAR EL AUTOENGA\xD1O: Mostrale c\xF3mo su mente o el demonio interno lo quiere enga\xF1ar (el "permitido corto" de LOL/videos/memes, "ma\xF1ana empiezo", buscar aprobaci\xF3n externa en el boliche o encapricharse cuando un escenario es imperfecto).
-2) APLICAR EL PROTOCOLO EXACTO DE SU GU\xCDA SEG\xDAN EL CASO:
-   - Si es Autoconfianza/Social: Postura erguida inmediata, mirada firme sin esquivar, respiraci\xF3n lenta y decretos ("Yo controlo c\xF3mo sentirme", "Si no cumplo los est\xE1ndares de alguien, que se pudra") o actitud Alma Libre sin esperar resultado (como en Santos a las 3 AM, Artur o con Lucho).
-   - Si es Enojo/Imprevisto/Ropa sucia/Discusi\xF3n: Congelamiento t\xE1ctico al primer segundo, respirar "como un le\xF3n calmando su ira", construir el Ideal Adaptado (buscar la mejor opci\xF3n real dentro de la imperfecci\xF3n) o Sabidur\xEDa de Retroceso con humildad (como en lo de Ren\xE1n).
-   - Si es Rutina Matutina (6:45 AM): Levantarse antes de contar hasta 3 sin negociar, directo al ba\xF1o, agua fr\xEDa y audio Horus (10 min) para entrenar a las 7:30 AM con auriculares.
-   - Si es Estudio/Ingenier\xEDa (5:00 PM / avisos Discord): Apagar TV, celular en No Molestar, temporizador, atravesar los primeros 10-15 min aceptando que "es normal sentirse desorientado la primera vez, es puramente mec\xE1nico", ver 1 video de YouTube para el panorama general y resolver solo para cerrar a las 11:00 PM rumbo al t\xEDtulo de ingeniero y portafolio.
-   - Si es Apat\xEDa/D\xEDa Complicado: Confrontar al demonio interno ("\xBFSi sab\xE9s que ten\xE9s el control, qu\xE9 carajo est\xE1s haciendo?", "S\xE9 que esto me costar\xE1, pero dejar\xE9 de hacerlo"), encender enojo constructivo y ejecutar la acci\xF3n m\xEDnima para no quedar en D\xEDa Cero.
-3) VALORAR EL M\xC9TODO DE \xC9XITO PREVIO: Cuando cites una experiencia negativa superada, destac\xE1 por qu\xE9 el m\xE9todo que aplic\xF3 Juan esa vez funcion\xF3 y pedile que repita exactamente esa mec\xE1nica ahora.`;
-  return `Sos la voz m\xE1s l\xFAcida, persuasiva y despierta de Juan Francisco Cano. Habl\xE1s de vos a vos (voseo argentino directo, claro y firme).
+<telemetria_temporal_oficial>
+${telemetriaTemporal.telemetriaPromptTexto}
+</telemetria_temporal_oficial>
 
 <telemetria_horaria_real>
-Hora y franja actual del sistema: ${horaInfo}
+Hora actual: ${horaInfo}
 </telemetria_horaria_real>
 
 <instruccion_de_modo_activo>
 ${bloqueInstruccionPorModo}
 </instruccion_de_modo_activo>
 
-<detector_de_autoengano_e_instintos_primitivos>
-${MAPA_AUTOENGANO_E_INSTINTOS}
-</detector_de_autoengano_e_instintos_primitivos>
-
 <auditoria_objetivos_y_horarios>
-${params.auditoriaComoVamosTexto || "Auditor\xEDa disponible bajo demanda."}
+${params.auditoriaComoVamosTexto || "Sin reportes cargados todav\xEDa."}
 </auditoria_objetivos_y_horarios>
 
-<experiencias_del_arbol>
+<contexto_historico_solo_referencia_no_asumir>
+(IMPORTANTE: Esto ocurri\xF3 en d\xEDas pasados. PROHIBIDO asumir que lo que le pasa hoy a Juan tiene esta misma causa. Usalo solo para conocer qu\xE9 m\xE9todos le han servido):
 ${params.fichasCompactasTexto}
-</experiencias_del_arbol>
-
-<hecho_real_habilitado_en_este_turno>
-${params.hechoDosificadoTexto || "Usar experiencias de la auditor\xEDa o persuasi\xF3n directa en presente."}
-</hecho_real_habilitado_en_este_turno>
+</contexto_historico_solo_referencia_no_asumir>
 
 <hilo_reciente>
 ${params.hiloRecienteTexto}
-</hilo_reciente>
-
-ESTRUCTURA DE SALIDA OBLIGATORIA:
-<analisis_contextual>
-- Modo y especificidad: [${modo}]
-- Autoengano o instinto detectado: [Qu\xE9 excusa, gatillo o patr\xF3n horario est\xE1 operando a las ${horaInfo}]
-- Enfoque elegido y metodo valorado: [Qu\xE9 protocolo o caso de \xE9xito propio se activa]
-</analisis_contextual>
-
-<consejo_tactico>
-[Tu respuesta directa en voseo argentino cumpliendo estrictamente el MODO ACTIVO EN ESTE TURNO.]
-</consejo_tactico>`;
+</hilo_reciente>`;
 }
-var ASSISTANT_PREFILL_TAG = "<analisis_contextual>\n- Autoengano o instinto detectado:";
-function parseRepairedTacticalOutput(rawOutput, ramaDetectada, prefillUsado = false) {
-  const fullText = prefillUsado && !rawOutput.trim().startsWith("<analisis_contextual>") ? `${ASSISTANT_PREFILL_TAG} ${rawOutput.trim()}` : rawOutput.trim();
+var ASSISTANT_PREFILL_TAG = "";
+function parseRepairedTacticalOutput(rawOutput, ramaDetectada, _prefillUsado = false) {
+  const fullText = rawOutput.trim();
   const analisisMatch = fullText.match(/<analisis_contextual>([\s\S]*?)<\/analisis_contextual>/i);
   const consejoMatch = fullText.match(/<consejo_tactico>([\s\S]*?)<\/consejo_tactico>/i);
-  const analisisRaw = analisisMatch ? analisisMatch[1].trim() : "";
   let consejoTactico = consejoMatch ? consejoMatch[1].trim() : "";
   if (!consejoTactico) {
     const splitAfterAnalisis = fullText.split(/<\/analisis_contextual>/i);
     if (splitAfterAnalisis.length > 1) {
       consejoTactico = splitAfterAnalisis[1].replace(/<\/?consejo_tactico>/gi, "").trim();
     } else {
-      consejoTactico = fullText.replace(/<\/?analisis_contextual>/gi, "").replace(/<\/?consejo_tactico>/gi, "").trim();
+      consejoTactico = fullText.replace(/<analisis_contextual>[\s\S]*?<\/analisis_contextual>/gi, "").replace(/<\/?analisis_contextual>/gi, "").replace(/<\/?consejo_tactico>/gi, "").trim();
     }
   }
-  const extractLine = (labelRegex, fallback) => {
-    const m = analisisRaw.match(labelRegex);
-    return m && m[1] ? m[1].trim() : fallback;
-  };
-  const autoenganoOContinuidad = extractLine(
-    /-\s*(?:Autoengano\s*o\s*instinto\s*detectado|Continuidad(?:\s*y\s*cambio\s*de\s*enfoque)?|Modo\s*y\s*especificidad):\s*([^\n]+)/i,
-    "Evaluaci\xF3n directa sobre consulta activa."
-  );
-  const enfoqueElegido = extractLine(
-    /-\s*(?:Enfoque\s*elegido\s*y\s*(?:control\s*de\s*repeticion|metodo\s*valorado)|Consejo\s*gen[eé]rico\s*descartado):\s*([^\n]+)/i,
-    "Enfoque persuasivo en tiempo presente."
-  );
-  const patronDetectado = extractLine(
-    /-\s*(?:Patr[oó]n detectado|Ancla o modulo activado):\s*([^\n]+)/i,
-    `Cruce de mecanismo en rama ${ramaDetectada}.`
-  );
+  const analisisRaw = analisisMatch ? analisisMatch[1].trim() : "";
   const fichasCitadas = Array.from(new Set(fullText.match(/VIV-[A-Z0-9-]+/g) || []));
-  const formattedMessage = consejoTactico.replace(/\*\*/g, "").replace(/\*/g, "").replace(/^[0-9]+\.\s*/gm, "").replace(/^[-•]\s*/gm, "").trim();
+  const formattedMessage = consejoTactico.replace(/\*\*/g, "").trim();
   return {
     formattedMessage,
     tacticalAnalysis: {
-      continuidad: autoenganoOContinuidad,
-      consejoGenericoDescartado: enfoqueElegido,
-      patronDetectado,
-      consejoTactico,
+      continuidad: analisisRaw || "An\xE1lisis contextual adaptado al mensaje actual.",
+      consejoGenericoDescartado: "Sin asunciones de causas pasadas no mencionadas.",
+      patronDetectado: `Rama: ${ramaDetectada}`,
+      consejoTactico: formattedMessage,
       ramaDetectada,
       fichasCitadas
     }
@@ -858,11 +1050,9 @@ var PLANTILLAS_RASGOS_OFICIALES = {
 };
 function clasificarFranjaHoraria(isoDateStr) {
   const d = isoDateStr ? new Date(isoDateStr) : /* @__PURE__ */ new Date();
-  const hours = d.getHours();
-  const minutes = d.getMinutes();
+  const { hours, minutes, horaExacta } = getLocalTucumanTime(d);
   const totalMinutes = hours * 60 + minutes;
-  const horaExacta = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-  const dateKey = d.toISOString().split("T")[0];
+  const dateKey = getLocalTucumanIsoDate(d);
   if (totalMinutes >= 6 * 60 + 30 && totalMinutes < 7 * 60 + 30) {
     return { horaExacta, dateKey, franja: "06:45_arranque", labelFranja: "06:45 AM \xB7 Arranque Matutino & Audio Horus" };
   }
@@ -881,22 +1071,23 @@ function clasificarFranjaHoraria(isoDateStr) {
   return { horaExacta, dateKey, franja: "23:00_cierre_o_social", labelFranja: "23:00-06:30 \xB7 Cierre Nocturno (23h) / Social Fin de Semana" };
 }
 function generarAuditoriaComoVamos(logs, objetivos, memories = [], strategies = []) {
-  const hoyIso = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const hoyIso = getLocalTucumanIsoDate();
   const hace7DiasMs = Date.now() - 7 * 24 * 60 * 60 * 1e3;
-  const ultimos7DiasKeys = [];
-  for (let i = 0; i < 7; i++) {
+  const ultimosDiasCompletadosKeys = [];
+  for (let i = 1; i <= 7; i++) {
     const d = new Date(Date.now() - i * 24 * 60 * 60 * 1e3);
-    ultimos7DiasKeys.push(d.toISOString().split("T")[0]);
+    ultimosDiasCompletadosKeys.push(getLocalTucumanIsoDate(d));
   }
   const conteoPorDia = /* @__PURE__ */ new Map();
-  ultimos7DiasKeys.forEach((k) => conteoPorDia.set(k, 0));
+  ultimosDiasCompletadosKeys.forEach((k) => conteoPorDia.set(k, 0));
+  conteoPorDia.set(hoyIso, 0);
   const logsRecientes = (logs || []).filter((l) => new Date(l.createdAt).getTime() >= hace7DiasMs);
   for (const log of logsRecientes) {
-    const { dateKey } = clasificarFranjaHoraria(log.createdAt);
-    conteoPorDia.set(dateKey, (conteoPorDia.get(dateKey) || 0) + 1);
+    const dKey = log.dateKey || getLocalTucumanIsoDate(log.createdAt);
+    conteoPorDia.set(dKey, (conteoPorDia.get(dKey) || 0) + 1);
   }
   const reportesHoyCount = conteoPorDia.get(hoyIso) || 0;
-  const diasSinReportesUltimos7d = ultimos7DiasKeys.filter((k) => (conteoPorDia.get(k) || 0) === 0);
+  const diasSinReportesUltimos7d = ultimosDiasCompletadosKeys.filter((k) => (conteoPorDia.get(k) || 0) === 0);
   const promedioReportesPorDiaUltimos7d = Number((logsRecientes.length / 7).toFixed(1));
   const ordenFranjas = [
     { franja: "06:45_arranque", label: "06:45 AM \xB7 Arranque & Audio Horus" },
@@ -908,7 +1099,7 @@ function generarAuditoriaComoVamos(logs, objetivos, memories = [], strategies = 
   ];
   const logsHoy = logsRecientes.filter((l) => clasificarFranjaHoraria(l.createdAt).dateKey === hoyIso);
   const franjasReportadasHoy = new Set(logsHoy.map((l) => l.franja || clasificarFranjaHoraria(l.createdAt).franja));
-  const horaActual = (/* @__PURE__ */ new Date()).getHours();
+  const horaActual = getLocalTucumanTime().hours;
   const franjasCiegasHoy = [];
   if (horaActual >= 8 && !franjasReportadasHoy.has("06:45_arranque")) {
     franjasCiegasHoy.push("Sin reporte de Arranque 6:45 AM hoy");
@@ -1894,17 +2085,23 @@ async function handler(req, res) {
     );
     const infoHora = clasificarFranjaHoraria();
     const horaActualTextoFinal = horaActualTexto || `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
-    const modoInteraccionFinal = modoInteraccion || evaluarModoInteraccion(ultimoMensajeUsuario, messages || []).modo;
+    const evalModo = evaluarModoInteraccion(ultimoMensajeUsuario, messages || []);
+    const modoInteraccionFinal = modoInteraccion || evalModo.modo;
+    const logsSincronizados = sincronizarLogsConMensajesChatA(logs || [], messages || []);
     let auditoriaTextoFinal = auditoriaComoVamosTexto;
-    if (!auditoriaTextoFinal && (objetivosEstructurados.length > 0 || logs.length > 0)) {
+    if (!auditoriaTextoFinal && (objetivosEstructurados.length > 0 || logsSincronizados.length > 0)) {
       const audObj = generarAuditoriaComoVamos(
-        logs || [],
+        logsSincronizados,
         objetivosEstructurados || [],
         memories || [],
         strategies || []
       );
-      auditoriaTextoFinal = formatearAuditoriaParaPrompt(audObj);
+      const historialCargas = compilarHistorialCompletoCargas(logs || [], messages || []);
+      auditoriaTextoFinal = `${historialCargas}
+
+${formatearAuditoriaParaPrompt(audObj)}`;
     }
+    const desgloseReporteTextoFinal = desgloseReporteTexto || compilarHistorialCompletoCargas(logs || [], messages || []);
     const systemInstruction = buildRepairedSystemPrompt({
       ramaActiva,
       tagsDetectados,
@@ -1914,7 +2111,8 @@ async function handler(req, res) {
       horaActualTexto: horaActualTextoFinal,
       modoInteraccion: modoInteraccionFinal,
       auditoriaComoVamosTexto: auditoriaTextoFinal,
-      desgloseReporteTexto
+      desgloseReporteTexto: desgloseReporteTextoFinal,
+      evaluacionContexto: evalModo.evaluacionContexto
     });
     const headerKey = req.headers?.["x-groq-api-key"];
     const groqKey = typeof headerKey === "string" && headerKey.trim() || process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
@@ -1929,9 +2127,11 @@ async function handler(req, res) {
       ...recentMessages.map((m) => ({
         role: m.sender === "user" ? "user" : "assistant",
         content: m.text
-      })),
-      { role: "assistant", content: ASSISTANT_PREFILL_TAG }
+      }))
     ];
+    if (ASSISTANT_PREFILL_TAG) {
+      groqMessages.push({ role: "assistant", content: ASSISTANT_PREFILL_TAG });
+    }
     const response = await fetch(GROQ_API_URL, {
       method: "POST",
       headers: {
@@ -1941,7 +2141,7 @@ async function handler(req, res) {
       body: JSON.stringify({
         model: PRIMARY_MODEL,
         messages: groqMessages,
-        temperature: 0.25,
+        temperature: 0.35,
         max_tokens: 900
       })
     });
@@ -1953,11 +2153,10 @@ async function handler(req, res) {
     }
     const data = await response.json();
     const rawContent = cleanThinkTags(data.choices?.[0]?.message?.content || "");
-    const fullContent = rawContent.startsWith("<analisis_contextual>") ? rawContent : `${ASSISTANT_PREFILL_TAG} ${rawContent}`;
     const { formattedMessage, tacticalAnalysis } = parseRepairedTacticalOutput(
-      fullContent,
+      rawContent,
       ramaActiva,
-      true
+      false
     );
     return res.status(200).json({
       message: formattedMessage,
