@@ -20,6 +20,7 @@ import {
   compilarHistorialCompletoCargas,
   sincronizarLogsConMensajesChatA,
 } from "../lib/dateTimeUtils";
+import { fetchRegistrosPBEstricto } from "../services/pocketbaseService";
 import { construirArbolDesdeDatos } from "../lib/storage";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -97,21 +98,32 @@ export default async function handler(req: any, res: any) {
     const modoInteraccionFinal: ModoInteraccionIA =
       modoInteraccion || evalModo.modo;
 
-    const logsSincronizados = sincronizarLogsConMensajesChatA(logs || [], messages || []);
-    let auditoriaTextoFinal = auditoriaComoVamosTexto;
-    if (!auditoriaTextoFinal && (objetivosEstructurados.length > 0 || logsSincronizados.length > 0)) {
-      const audObj = generarAuditoriaComoVamos(
-        logsSincronizados,
-        objetivosEstructurados || [],
-        memories || [],
-        strategies || []
-      );
-      const historialCargas = compilarHistorialCompletoCargas(logs || [], messages || []);
-      auditoriaTextoFinal = `${historialCargas}\n\n${formatearAuditoriaParaPrompt(audObj)}`;
+    // En el backend, SIEMPRE consultar PocketBase para garantizar que los reportes de la Base de Datos
+    // estén en el prompt aunque el cliente los haya enviado vacíos o parciales.
+    let todosLosLogs = [...(logs || [])];
+    try {
+      const remoteLogs = await fetchRegistrosPBEstricto();
+      if (remoteLogs && remoteLogs.length > 0) {
+        remoteLogs.forEach((r) => {
+          if (!todosLosLogs.some((l) => l.id === r.id)) {
+            todosLosLogs.push(r);
+          }
+        });
+      }
+    } catch (_e) {
+      // continuar con logs locales
     }
 
-    const desgloseReporteTextoFinal =
-      desgloseReporteTexto || compilarHistorialCompletoCargas(logs || [], messages || []);
+    const logsSincronizados = sincronizarLogsConMensajesChatA(todosLosLogs, messages || []);
+    const audObj = generarAuditoriaComoVamos(
+      logsSincronizados,
+      objetivosEstructurados || [],
+      memories || [],
+      strategies || []
+    );
+    const historialCargas = compilarHistorialCompletoCargas(logsSincronizados, messages || []);
+    const auditoriaTextoFinal = `${historialCargas}\n\n${formatearAuditoriaParaPrompt(audObj)}`;
+    const desgloseReporteTextoFinal = historialCargas;
 
     const systemInstruction = buildRepairedSystemPrompt({
       ramaActiva,

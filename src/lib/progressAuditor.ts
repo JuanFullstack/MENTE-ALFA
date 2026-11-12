@@ -345,7 +345,7 @@ export function generarAuditoriaComoVamos(
 
   const logsRecientes = (logs || []).filter((l) => new Date(l.createdAt).getTime() >= hace7DiasMs);
   for (const log of logsRecientes) {
-    const dKey = log.dateKey || getLocalTucumanIsoDate(log.createdAt);
+    const dKey = log.createdAt ? getLocalTucumanIsoDate(log.createdAt) : (log.dateKey || hoyIso);
     conteoPorDia.set(dKey, (conteoPorDia.get(dKey) || 0) + 1);
   }
 

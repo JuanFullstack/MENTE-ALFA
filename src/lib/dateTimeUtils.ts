@@ -197,8 +197,8 @@ export function compilarHistorialCompletoCargas(
   const ayerDesc = getLocalTucumanFullDescription(ayerDate);
   const { horaExacta } = getLocalTucumanTime();
 
-  const logsHoy = todosLosLogs.filter((l) => (l.dateKey || getLocalTucumanIsoDate(l.createdAt)) === hoyIso);
-  const logsAyer = todosLosLogs.filter((l) => (l.dateKey || getLocalTucumanIsoDate(l.createdAt)) === ayerIso);
+  const logsHoy = todosLosLogs.filter((l) => (l.createdAt ? getLocalTucumanIsoDate(l.createdAt) : l.dateKey) === hoyIso);
+  const logsAyer = todosLosLogs.filter((l) => (l.createdAt ? getLocalTucumanIsoDate(l.createdAt) : l.dateKey) === ayerIso);
 
   // Helper para formatear una lista de logs
   const formatearListaLogs = (items: DailyLog[]): string => {

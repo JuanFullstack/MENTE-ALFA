@@ -890,7 +890,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura:
       // Sincronizar logs con mensajes del canal de cargas para nunca perder reportes
       const logsSincronizados = sincronizarLogsConMensajesChatA(logs, updatedMessages);
       const auditoriaObj = generarAuditoriaComoVamos(logsSincronizados, objetivosEstructurados, memories, strategies);
-      const historialCargasTexto = compilarHistorialCompletoCargas(logs, updatedMessages);
+      const historialCargasTexto = compilarHistorialCompletoCargas(logsSincronizados, updatedMessages);
       const auditoriaComoVamosTexto = `${historialCargasTexto}\n\n${formatearAuditoriaParaPrompt(auditoriaObj)}`;
 
       let data: any = null;
@@ -1092,7 +1092,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura:
   const cargasDeHoy = useMemo(() => {
     const logsSincronizados = sincronizarLogsConMensajesChatA(logs, messages);
     return logsSincronizados
-      .filter((l) => (l.dateKey || getLocalTucumanIsoDate(l.createdAt)) === hoyIso)
+      .filter((l) => (l.createdAt ? getLocalTucumanIsoDate(l.createdAt) : l.dateKey) === hoyIso)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [logs, messages, hoyIso]);
 

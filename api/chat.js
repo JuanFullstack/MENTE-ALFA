@@ -130,8 +130,8 @@ function compilarHistorialCompletoCargas(logs, allMessages = []) {
   const hoyDesc = getLocalTucumanFullDescription();
   const ayerDesc = getLocalTucumanFullDescription(ayerDate);
   const { horaExacta } = getLocalTucumanTime();
-  const logsHoy = todosLosLogs.filter((l) => (l.dateKey || getLocalTucumanIsoDate(l.createdAt)) === hoyIso);
-  const logsAyer = todosLosLogs.filter((l) => (l.dateKey || getLocalTucumanIsoDate(l.createdAt)) === ayerIso);
+  const logsHoy = todosLosLogs.filter((l) => (l.createdAt ? getLocalTucumanIsoDate(l.createdAt) : l.dateKey) === hoyIso);
+  const logsAyer = todosLosLogs.filter((l) => (l.createdAt ? getLocalTucumanIsoDate(l.createdAt) : l.dateKey) === ayerIso);
   const formatearListaLogs = (items) => {
     return items.map((l, idx) => {
       const hora = l.horaExacta || getLocalTucumanTime(l.createdAt).horaExacta;
@@ -1083,7 +1083,7 @@ function generarAuditoriaComoVamos(logs, objetivos, memories = [], strategies = 
   conteoPorDia.set(hoyIso, 0);
   const logsRecientes = (logs || []).filter((l) => new Date(l.createdAt).getTime() >= hace7DiasMs);
   for (const log of logsRecientes) {
-    const dKey = log.dateKey || getLocalTucumanIsoDate(log.createdAt);
+    const dKey = log.createdAt ? getLocalTucumanIsoDate(log.createdAt) : log.dateKey || hoyIso;
     conteoPorDia.set(dKey, (conteoPorDia.get(dKey) || 0) + 1);
   }
   const reportesHoyCount = conteoPorDia.get(hoyIso) || 0;
@@ -2025,6 +2025,59 @@ var INITIAL_OBJETIVOS_ESTRUCTURADOS = [
   }
 ];
 
+// src/services/pocketbaseService.ts
+var POCKETBASE_URL = typeof window !== "undefined" && window.location.protocol === "https:" ? `${window.location.origin}/api/pb` : "http://167.234.243.247:8090";
+var META_PREFIX = "[[META_V3:";
+var META_SUFFIX = "]]\n";
+function deserializarLogDesdePB(item) {
+  const rawNote = item.note || "";
+  let cleanNote = rawNote;
+  let parsedMeta = {};
+  if (rawNote.startsWith(META_PREFIX)) {
+    const endIdx = rawNote.indexOf(META_SUFFIX);
+    if (endIdx !== -1) {
+      const jsonStr = rawNote.substring(META_PREFIX.length, endIdx);
+      cleanNote = rawNote.substring(endIdx + META_SUFFIX.length);
+      try {
+        parsedMeta = JSON.parse(jsonStr);
+      } catch {
+      }
+    }
+  }
+  const pbCreated = item.created ? String(item.created).replace(" ", "T") : (/* @__PURE__ */ new Date()).toISOString();
+  return {
+    id: item.logId || item.id,
+    energy: Number(item.energy) || 5,
+    motivation: Number(item.motivation) || 5,
+    stress: Number(item.stress) || 5,
+    note: cleanNote,
+    createdAt: pbCreated,
+    ...parsedMeta
+  };
+}
+async function fetchRegistrosPBEstricto() {
+  try {
+    const todos = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const res = await fetch(
+        `${POCKETBASE_URL}/api/collections/mentealfa_registros/records?sort=-created&perPage=500&page=${page}`,
+        { method: "GET", headers: { "Content-Type": "application/json" } }
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      (data.items || []).forEach((it) => todos.push(deserializarLogDesdePB(it)));
+      totalPages = data.totalPages || 1;
+      page++;
+    } while (page <= totalPages && page <= 20);
+    return todos;
+  } catch (error) {
+    console.warn("[PocketBase] Error al cargar registros diarios:", error);
+    return null;
+  }
+}
+
 // src/api/chat.ts
 var GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 var PRIMARY_MODEL = "qwen/qwen3.8-27b";
@@ -2087,21 +2140,30 @@ async function handler(req, res) {
     const horaActualTextoFinal = horaActualTexto || `${infoHora.horaExacta} hs (${infoHora.labelFranja})`;
     const evalModo = evaluarModoInteraccion(ultimoMensajeUsuario, messages || []);
     const modoInteraccionFinal = modoInteraccion || evalModo.modo;
-    const logsSincronizados = sincronizarLogsConMensajesChatA(logs || [], messages || []);
-    let auditoriaTextoFinal = auditoriaComoVamosTexto;
-    if (!auditoriaTextoFinal && (objetivosEstructurados.length > 0 || logsSincronizados.length > 0)) {
-      const audObj = generarAuditoriaComoVamos(
-        logsSincronizados,
-        objetivosEstructurados || [],
-        memories || [],
-        strategies || []
-      );
-      const historialCargas = compilarHistorialCompletoCargas(logs || [], messages || []);
-      auditoriaTextoFinal = `${historialCargas}
+    let todosLosLogs = [...logs || []];
+    try {
+      const remoteLogs = await fetchRegistrosPBEstricto();
+      if (remoteLogs && remoteLogs.length > 0) {
+        remoteLogs.forEach((r) => {
+          if (!todosLosLogs.some((l) => l.id === r.id)) {
+            todosLosLogs.push(r);
+          }
+        });
+      }
+    } catch (_e) {
+    }
+    const logsSincronizados = sincronizarLogsConMensajesChatA(todosLosLogs, messages || []);
+    const audObj = generarAuditoriaComoVamos(
+      logsSincronizados,
+      objetivosEstructurados || [],
+      memories || [],
+      strategies || []
+    );
+    const historialCargas = compilarHistorialCompletoCargas(logsSincronizados, messages || []);
+    const auditoriaTextoFinal = `${historialCargas}
 
 ${formatearAuditoriaParaPrompt(audObj)}`;
-    }
-    const desgloseReporteTextoFinal = desgloseReporteTexto || compilarHistorialCompletoCargas(logs || [], messages || []);
+    const desgloseReporteTextoFinal = historialCargas;
     const systemInstruction = buildRepairedSystemPrompt({
       ramaActiva,
       tagsDetectados,

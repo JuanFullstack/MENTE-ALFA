@@ -29,6 +29,7 @@ import {
   compilarHistorialCompletoCargas,
   sincronizarLogsConMensajesChatA,
 } from "./src/lib/dateTimeUtils";
+import { fetchRegistrosPBEstricto } from "./src/services/pocketbaseService";
 import { consolidarNodosPatronesPorPunteros, construirArbolDesdeDatos } from "./src/lib/storage";
 import { FichaVivenciaInmutable, RamaTematica, Conversation } from "./src/types";
 
@@ -544,21 +545,30 @@ Responde únicamente con el objeto JSON válido.`;
     const modoInteraccionFinal: ModoInteraccionIA =
       modoInteraccion || evalModo.modo;
 
-    const logsSincronizados = sincronizarLogsConMensajesChatA(logs || [], messages || []);
-    let auditoriaTextoFinal = auditoriaComoVamosTexto;
-    if (!auditoriaTextoFinal && (objetivosEstructurados || logsSincronizados.length > 0)) {
-      const audObj = generarAuditoriaComoVamos(
-        logsSincronizados,
-        objetivosEstructurados || [],
-        memories || [],
-        strategies || []
-      );
-      const historialCargas = compilarHistorialCompletoCargas(logs || [], messages || []);
-      auditoriaTextoFinal = `${historialCargas}\n\n${formatearAuditoriaParaPrompt(audObj)}`;
+    let todosLosLogs = [...(logs || [])];
+    try {
+      const remoteLogs = await fetchRegistrosPBEstricto();
+      if (remoteLogs && remoteLogs.length > 0) {
+        remoteLogs.forEach((r) => {
+          if (!todosLosLogs.some((l) => l.id === r.id)) {
+            todosLosLogs.push(r);
+          }
+        });
+      }
+    } catch (_e) {
+      // continuar con logs locales
     }
 
-    const desgloseReporteTextoFinal =
-      desgloseReporteTexto || compilarHistorialCompletoCargas(logs || [], messages || []);
+    const logsSincronizados = sincronizarLogsConMensajesChatA(todosLosLogs, messages || []);
+    const audObj = generarAuditoriaComoVamos(
+      logsSincronizados,
+      objetivosEstructurados || [],
+      memories || [],
+      strategies || []
+    );
+    const historialCargas = compilarHistorialCompletoCargas(logsSincronizados, messages || []);
+    const auditoriaTextoFinal = `${historialCargas}\n\n${formatearAuditoriaParaPrompt(audObj)}`;
+    const desgloseReporteTextoFinal = historialCargas;
 
     // FASE 3: Prompt de Inferencia Final Reparado con Modos y Evaluador de Suficiencia de Contexto
     const systemInstruction = buildRepairedSystemPrompt({
