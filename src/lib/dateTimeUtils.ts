@@ -271,3 +271,4 @@ ${formatearListaLogs(logsHoy)}`;
 
   return `${bloqueAyer}\n\n${bloqueHoy}`;
 }
+

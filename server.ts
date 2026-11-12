@@ -40,6 +40,28 @@ const PORT = 3000;
 
 app.use(express.json());
 
+// Proxy PocketBase para evitar errores de red o Mixed Content
+app.all("/api/pb*", async (req, res) => {
+  try {
+    const cleanPath = req.url.replace(/^\/api\/pb/, "");
+    const targetUrl = `http://167.234.243.247:8090${cleanPath.startsWith("/") ? "" : "/"}${cleanPath}`;
+    const headers: Record<string, string> = {};
+    if (req.headers["content-type"]) headers["Content-Type"] = req.headers["content-type"] as string;
+    if (req.headers["authorization"]) headers["Authorization"] = req.headers["authorization"] as string;
+
+    const fetchOptions: any = { method: req.method, headers };
+    if (req.method !== "GET" && req.method !== "HEAD" && req.body) {
+      fetchOptions.body = JSON.stringify(req.body);
+    }
+    const pbRes = await fetch(targetUrl, fetchOptions);
+    const contentType = pbRes.headers.get("content-type") || "application/json";
+    const data = await pbRes.text();
+    res.status(pbRes.status).setHeader("Content-Type", contentType).send(data);
+  } catch (err: any) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 function getGeminiKey(req?: express.Request): string | null {
   const headerKey = req?.headers["x-gemini-api-key"];
   if (typeof headerKey === "string" && headerKey.trim()) return headerKey.trim();

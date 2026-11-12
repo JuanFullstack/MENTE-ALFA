@@ -22,7 +22,10 @@ import {
 } from "../lib/storage";
 import { asegurarFichaInmutable } from "../lib/baseContext";
 
-export const POCKETBASE_URL = "http://167.234.243.247:8090";
+export const POCKETBASE_URL =
+  typeof window !== "undefined" && window.location.protocol === "https:"
+    ? `${window.location.origin}/api/pb`
+    : "http://167.234.243.247:8090";
 
 /**
  * ============================================================================
