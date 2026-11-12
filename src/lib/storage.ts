@@ -955,10 +955,22 @@ export const ZenDB = {
   },
 
   getMessages(): Message[] {
-    return getLocalStorage<Message[]>(KEYS.MESSAGES, INITIAL_MESSAGES);
+    // Solo historial de Consultas (Chat B). Los mensajes de Carga Diaria vienen de la Base de Datos.
+    return getLocalStorage<Message[]>(KEYS.MESSAGES, INITIAL_MESSAGES).filter(
+      (m) => m.conversationId !== "conv-canal-cargas-diarias" && !(m as any).desgloseReporte
+    );
   },
   setMessages(messages: Message[]): void {
-    setLocalStorage(KEYS.MESSAGES, messages);
+    // Los mensajes de Carga Diaria (reportes) NO se guardan en el celular: viven en la Base de Datos.
+    const previos = getLocalStorage<Message[]>(KEYS.MESSAGES, INITIAL_MESSAGES);
+    const reportesAunNoRescatados = previos.filter(
+      (m) => m.conversationId === "conv-canal-cargas-diarias" || (m as any).desgloseReporte
+    );
+    const consultas = messages.filter(
+      (m) => m.conversationId !== "conv-canal-cargas-diarias" && !(m as any).desgloseReporte
+    );
+    // Se preservan los reportes legacy solo hasta que dbSync los suba a la BD y los elimine.
+    setLocalStorage(KEYS.MESSAGES, [...reportesAunNoRescatados, ...consultas]);
   },
 
   getMemories(): Memory[] {
@@ -990,10 +1002,11 @@ export const ZenDB = {
   },
 
   getLogs(): DailyLog[] {
-    return getLocalStorage<DailyLog[]>(KEYS.LOGS, INITIAL_LOGS);
+    // Los reportes viven ÚNICAMENTE en la Base de Datos (PocketBase). Ver src/lib/dbSync.ts
+    return [];
   },
-  setLogs(logs: DailyLog[]): void {
-    setLocalStorage(KEYS.LOGS, logs);
+  setLogs(_logs: DailyLog[]): void {
+    // No-op: los reportes NO se guardan en el celular.
   },
 
   getStrategies(): Strategy[] {

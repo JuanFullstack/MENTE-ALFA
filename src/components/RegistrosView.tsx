@@ -42,7 +42,9 @@ import {
 } from "../types";
 import { UserProfile } from "../lib/storage";
 import { getStoredGroqApiKey, getStoredGroqModel } from "../services/groqEvaluation";
-import { createRegistroPB, deleteRegistroPB } from "../services/pocketbaseService";
+import { deleteRegistroPB } from "../services/pocketbaseService";
+import { guardarRegistroEnBD } from "../lib/dbSync";
+import { getLocalTucumanIsoDate, sincronizarLogsConMensajesChatA } from "../lib/dateTimeUtils";
 import { PLANTILLAS_RASGOS_OFICIALES, clasificarFranjaHoraria } from "../lib/progressAuditor";
 import {
   ETIQUETAS_FACTORES_CONTEXTO,
@@ -66,7 +68,7 @@ interface RegistrosViewProps {
   onSaveNewStrategy?: (strategy: Strategy) => void;
 }
 
-type HorizonteReporte = "diario" | "semanal" | "mensual" | "anual";
+type HorizonteReporte = "diario" | "ayer" | "semanal" | "mensual" | "anual";
 
 export default function RegistrosView({
   logs,
@@ -123,19 +125,28 @@ export default function RegistrosView({
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
-  const hoyIso = new Date().toISOString().split("T")[0];
+  const hoyIso = getLocalTucumanIsoDate();
+  const ayerIso = getLocalTucumanIsoDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
   const mesActualIso = hoyIso.slice(0, 7); // YYYY-MM
   const anioActualIso = hoyIso.slice(0, 4); // YYYY
 
-  // Filtrado estricto de logs según horizonte (Diario, Semanal, Mensual, Anual)
+  const todosLosLogs = useMemo(
+    () => sincronizarLogsConMensajesChatA(logs, messages),
+    [logs, messages]
+  );
+
+  // Filtrado estricto de logs según horizonte (Diario, Ayer, Semanal, Mensual, Anual)
   const logsPeriodo = useMemo(() => {
     const ahora = new Date();
     const hace7Dias = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    return (logs || []).filter((l) => {
-      const fKey = l.dateKey || clasificarFranjaHoraria(l.createdAt).dateKey;
+    return (todosLosLogs || []).filter((l) => {
+      const fKey = l.dateKey || getLocalTucumanIsoDate(l.createdAt);
       if (horizonte === "diario") {
         return fKey === hoyIso;
+      }
+      if (horizonte === "ayer") {
+        return fKey === ayerIso;
       }
       if (horizonte === "semanal") {
         const d = new Date(l.createdAt);
@@ -149,7 +160,7 @@ export default function RegistrosView({
       }
       return true;
     });
-  }, [logs, horizonte, hoyIso, mesActualIso, anioActualIso]);
+  }, [todosLosLogs, horizonte, hoyIso, ayerIso, mesActualIso, anioActualIso]);
 
   const reportesHoyCount = (logs || []).filter(
     (l) => (l.dateKey || clasificarFranjaHoraria(l.createdAt).dateKey) === hoyIso
@@ -593,7 +604,7 @@ export default function RegistrosView({
     };
 
     onUpdateLogs([newLog, ...logs]);
-    createRegistroPB(newLog);
+    guardarRegistroEnBD(newLog);
     setNote("");
     setActividadLog("");
     setMotivoDistraccion("");
@@ -770,6 +781,7 @@ export default function RegistrosView({
               {(
                 [
                   { id: "diario", label: `📅 Hoy (${hoyIso})` },
+                  { id: "ayer", label: `⏮️ Ayer (${ayerIso})` },
                   { id: "semanal", label: "📆 Semanal (7 días)" },
                   { id: "mensual", label: `🗓️ Mensual (${mesActualIso})` },
                   { id: "anual", label: `📊 Anual (${anioActualIso})` },

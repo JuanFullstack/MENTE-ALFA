@@ -101,6 +101,7 @@ import {
   sincronizarLogsConMensajesChatA,
   compilarHistorialCompletoCargas,
 } from "../lib/dateTimeUtils";
+import { guardarMensajeEnBD } from "../lib/dbSync";
 import { 
   upsertConversacionSummaryPB, 
   deleteConversacionPB,
@@ -140,7 +141,7 @@ interface ChatViewProps {
   onSetActiveConvId: (id: string) => void;
   onOpenQuickLog?: () => void;
   onOpenAddMemory?: () => void;
-  onSaveQuickLog?: (log: DailyLog) => void;
+  onSaveQuickLog?: (log: DailyLog) => void | boolean | Promise<boolean>;
   onUpdateObjetivos?: (objs: ObjetivoEstructurado[]) => void;
   autoRequestReportTrigger?: number;
   autoLoadDataTrigger?: number;
@@ -705,7 +706,7 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura:
         createdAt: new Date().toISOString(),
         desgloseResumenSesion: {
           ...desgloseSesion,
-          guardadoEnBD: pbResult.success || true,
+          guardadoEnBD: pbResult.success,
         },
       };
 
@@ -830,8 +831,8 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura:
           strategies
         );
 
-        // Paso 2: Enviar siempre el registro desglosado a la Base de Datos
-        onSaveQuickLog?.(reporteOperativo.log);
+        // Paso 2: Enviar el registro desglosado a la Base de Datos y ESPERAR la confirmación real
+        const guardadoEnBDReal = Boolean(await onSaveQuickLog?.(reporteOperativo.log));
 
         // Si detectó un nuevo método regulador, guardarlo automáticamente como Método en la BD
         if (reporteOperativo.nuevoMetodoParaGuardar) {
@@ -855,21 +856,23 @@ Responde ÚNICAMENTE con un objeto JSON válido con esta estructura:
           });
         }
 
-        // Paso 3: Responder confirmando el envío a la Base de Datos y mostrando cómo desglosó el envío
+        // Paso 3: Responder confirmando el envío REAL a la Base de Datos y mostrando cómo desglosó el envío
         const aiConfirmMsg: Message = {
           id: `m-${Date.now() + 1}`,
           conversationId: effectiveConvId,
           sender: "assistant",
-          text: reporteOperativo.mensajeConfirmacionBD,
+          text: guardadoEnBDReal
+            ? reporteOperativo.mensajeConfirmacionBD
+            : `⚠️ NO SE PUDO CONFIRMAR EL GUARDADO EN LA BASE DE DATOS (sin conexión con el servidor). El reporte quedó en cola de reintento y se subirá automáticamente al reabrir la app con conexión.\n\n${reporteOperativo.mensajeConfirmacionBD}`,
           createdAt: new Date().toISOString(),
           energyLevel: reporteOperativo.desglose.energia,
-          desgloseReporte: reporteOperativo.desglose,
+          desgloseReporte: { ...reporteOperativo.desglose, guardadoEnBD: guardadoEnBDReal },
         };
 
         const finalMsgs = [...updatedMessages, aiConfirmMsg];
         onUpdateMessages(finalMsgs);
-        createMensajePB(userMsg);
-        createMensajePB(aiConfirmMsg);
+        await guardarMensajeEnBD(userMsg);
+        await guardarMensajeEnBD(aiConfirmMsg);
         return;
       }
 

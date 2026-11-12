@@ -46,8 +46,27 @@ import {
   savePerfilPB,
   migrarBaseDeDatosExistenteAArbolPB
 } from "./services/pocketbaseService";
+import {
+  cargarReportesDesdeBD,
+  guardarRegistroEnBD,
+  obtenerColaPendiente,
+  esMensajeDeReporte,
+} from "./lib/dbSync";
+
+export interface EstadoBD {
+  disponible: boolean | null;
+  rescatados: number;
+  pendientes: number;
+  totalRegistros: number;
+}
 
 export default function App() {
+  const [estadoBD, setEstadoBD] = useState<EstadoBD>({
+    disponible: null,
+    rescatados: 0,
+    pendientes: 0,
+    totalRegistros: 0,
+  });
   // Session / Profile state
   const [profile, setProfile] = useState<UserProfile | null>(null);
   
@@ -145,36 +164,20 @@ export default function App() {
       }
     });
 
-    // 4. Consultar mensajes de chat en PocketBase
-    fetchMensajesPB().then((remoteMsgs) => {
-      if (remoteMsgs && remoteMsgs.length > 0) {
-        setMessages((current) => {
-          const merged = [...current];
-          remoteMsgs.forEach((r) => {
-            if (!merged.some((m) => m.id === r.id)) {
-              merged.push(r);
-            }
-          });
-          ZenDB.setMessages(merged);
-          return merged;
-        });
-      }
-    });
-
-    // 5. Consultar registros diarios en PocketBase
-    fetchRegistrosPB().then((remoteLogs) => {
-      if (remoteLogs && remoteLogs.length > 0) {
-        setLogs((current) => {
-          const merged = [...current];
-          remoteLogs.forEach((r) => {
-            if (!merged.some((l) => l.id === r.id)) {
-              merged.push(r);
-            }
-          });
-          ZenDB.setLogs(merged);
-          return merged;
-        });
-      }
+    // 4 y 5. REPORTES: la Base de Datos es la única fuente de verdad.
+    //       Rescata reportes atrapados en el celular, los sube y limpia la copia local.
+    cargarReportesDesdeBD().then((res) => {
+      setLogs(res.logs);
+      setMessages((current) => {
+        const consultas = current.filter((m) => !esMensajeDeReporte(m));
+        return [...res.mensajesReporte, ...consultas];
+      });
+      setEstadoBD({
+        disponible: res.bdDisponible,
+        rescatados: res.rescatadosLogs + res.rescatadosMensajes,
+        pendientes: res.pendientes,
+        totalRegistros: res.logs.length,
+      });
     });
 
     // 6. Consultar patrones en PocketBase
@@ -293,10 +296,15 @@ export default function App() {
     ZenDB.setObjetivosEstructurados(newObjs);
   };
 
-  const handleSaveQuickLog = (newLog: DailyLog, requestReportAfter?: boolean) => {
-    const updated = [newLog, ...logs];
-    handleUpdateLogs(updated);
-    createRegistroPB(newLog);
+  const handleSaveQuickLog = async (newLog: DailyLog, requestReportAfter?: boolean): Promise<boolean> => {
+    setLogs((prev) => [newLog, ...prev.filter((l) => l.id !== newLog.id)]);
+    const guardadoOk = await guardarRegistroEnBD(newLog);
+    setEstadoBD((prev) => ({
+      ...prev,
+      disponible: guardadoOk ? true : prev.disponible,
+      pendientes: obtenerColaPendiente().logs.length + obtenerColaPendiente().mensajes.length,
+      totalRegistros: prev.totalRegistros + 1,
+    }));
 
     // Actualizar avance de objetivos estructurados
     const objetivosActualizados = actualizarProgresoObjetivosConReporte(objetivosEstructurados, newLog);
@@ -339,6 +347,7 @@ export default function App() {
         setAutoRequestReportTrigger((prev) => prev + 1);
       }, 150);
     }
+    return guardadoOk;
   };
 
   const handleRequestReportFromNavbar = () => {
@@ -390,6 +399,50 @@ export default function App() {
         onRequestReport={handleRequestReportFromNavbar}
         profile={profile}
       />
+
+      {/* Aviso de rescate / estado de Base de Datos real */}
+      {estadoBD.rescatados > 0 && (
+        <div className="bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 flex items-center justify-between gap-2 shrink-0">
+          <span>
+            ✓ {estadoBD.rescatados} reportes rescatados del celular y guardados en la Base de Datos central (copia local eliminada).
+          </span>
+          <button
+            type="button"
+            onClick={() => setEstadoBD((prev) => ({ ...prev, rescatados: 0 }))}
+            className="underline text-[11px] opacity-90 hover:opacity-100 cursor-pointer"
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
+      {(estadoBD.disponible === false || estadoBD.pendientes > 0) && (
+        <div className="bg-amber-600 text-white text-xs font-bold px-3 py-1.5 flex items-center justify-between gap-2 shrink-0">
+          <span>
+            ⚠️ {estadoBD.pendientes > 0 ? `${estadoBD.pendientes} envío(s) en cola esperando conexión a Base de Datos.` : "Sin conexión con el servidor de Base de Datos."}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              cargarReportesDesdeBD().then((res) => {
+                setLogs(res.logs);
+                setMessages((current) => {
+                  const consultas = current.filter((m) => !esMensajeDeReporte(m));
+                  return [...res.mensajesReporte, ...consultas];
+                });
+                setEstadoBD({
+                  disponible: res.bdDisponible,
+                  rescatados: res.rescatadosLogs + res.rescatadosMensajes,
+                  pendientes: res.pendientes,
+                  totalRegistros: res.logs.length,
+                });
+              });
+            }}
+            className="bg-white text-amber-800 px-2.5 py-0.5 rounded-lg text-[11px] font-extrabold cursor-pointer"
+          >
+            Reintentar ahora
+          </button>
+        </div>
+      )}
 
       {/* Main View Area */}
       <main className="flex-1 flex overflow-hidden">
@@ -497,7 +550,7 @@ export default function App() {
         onClose={() => setIsQuickLogOpen(false)}
         onSaveLog={handleSaveQuickLog}
         objetivosActivos={objetivosEstructurados}
-        reportesHoyCount={logs.filter((l) => clasificarFranjaHoraria(l.createdAt).dateKey === new Date().toISOString().split("T")[0]).length}
+        reportesHoyCount={logs.filter((l) => clasificarFranjaHoraria(l.createdAt).dateKey === clasificarFranjaHoraria().dateKey).length}
       />
 
       <AddMemoryModal

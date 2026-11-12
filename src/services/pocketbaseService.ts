@@ -158,42 +158,76 @@ export async function deleteConversacionPB(convId: string): Promise<boolean> {
  * 2. MENSAJES DE CHAT (mentealfa_mensajes)
  * ============================================================================
  */
-export async function fetchMensajesPB(conversationId?: string): Promise<Message[]> {
-  try {
-    let url = `${POCKETBASE_URL}/api/collections/mentealfa_mensajes/records?sort=created&perPage=500`;
-    if (conversationId) {
-      url += `&filter=(conversationId='${conversationId}')`;
-    }
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
-
-    if (!res.ok) {
-      console.warn(`[PocketBase] No se pudieron listar los mensajes (${res.status})`);
-      return [];
-    }
-
-    const data = await res.json();
-    const items = data.items || [];
-
-    return items.map((item: any) => ({
+function mapearMensajeDesdePB(item: any): Message {
+  let ds: any = item.detectedState;
+  if (typeof ds === "string") {
+    try { ds = JSON.parse(ds); } catch { ds = null; }
+  }
+  const pbCreated = item.created ? String(item.created).replace(" ", "T") : new Date().toISOString();
+  if (ds && ds.__v === 2) {
+    return {
       id: item.msgId || item.id,
       conversationId: item.conversationId || "",
       sender: (item.sender === "user" ? "user" : "assistant") as "user" | "assistant",
       text: item.text || "",
-      detectedState: item.detectedState ? (typeof item.detectedState === "string" ? JSON.parse(item.detectedState) : item.detectedState) : null,
+      detectedState: ds.detectedState || null,
+      desgloseReporte: ds.desgloseReporte || null,
+      tacticalAnalysis: ds.tacticalAnalysis || undefined,
+      desgloseResumenSesion: ds.desgloseResumenSesion || undefined,
       energyLevel: item.energyLevel || undefined,
-      createdAt: item.created || new Date().toISOString(),
-    }));
+      createdAt: ds.createdAt || pbCreated,
+    } as Message;
+  }
+  return {
+    id: item.msgId || item.id,
+    conversationId: item.conversationId || "",
+    sender: (item.sender === "user" ? "user" : "assistant") as "user" | "assistant",
+    text: item.text || "",
+    detectedState: ds || null,
+    energyLevel: item.energyLevel || undefined,
+    createdAt: pbCreated,
+  } as Message;
+}
+
+/** Lee TODOS los mensajes (paginado). Devuelve null si la Base de Datos no respondió. */
+export async function fetchMensajesPBEstricto(conversationId?: string): Promise<Message[] | null> {
+  try {
+    const todos: Message[] = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      let url = `${POCKETBASE_URL}/api/collections/mentealfa_mensajes/records?sort=created&perPage=500&page=${page}`;
+      if (conversationId) url += `&filter=(conversationId='${conversationId}')`;
+      const res = await fetch(url, { method: "GET", headers: { "Content-Type": "application/json" } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      (data.items || []).forEach((it: any) => todos.push(mapearMensajeDesdePB(it)));
+      totalPages = data.totalPages || 1;
+      page++;
+    } while (page <= totalPages && page <= 20);
+    return todos;
   } catch (error) {
     console.warn("[PocketBase] Error al cargar mensajes:", error);
-    return [];
+    return null;
   }
 }
 
+export async function fetchMensajesPB(conversationId?: string): Promise<Message[]> {
+  return (await fetchMensajesPBEstricto(conversationId)) || [];
+}
+
 export async function createMensajePB(msg: Message): Promise<{ success: boolean; id?: string }> {
+  for (let intento = 1; intento <= 3; intento++) {
+    const r = await createMensajePBUnaVez(msg);
+    if (r.success) return r;
+    await new Promise((res) => setTimeout(res, 600 * intento));
+  }
+  return { success: false };
+}
+
+async function createMensajePBUnaVez(msg: Message): Promise<{ success: boolean; id?: string }> {
   try {
+    const m: any = msg;
     const res = await fetch(`${POCKETBASE_URL}/api/collections/mentealfa_mensajes/records`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -202,7 +236,14 @@ export async function createMensajePB(msg: Message): Promise<{ success: boolean;
         conversationId: msg.conversationId,
         sender: msg.sender,
         text: msg.text,
-        detectedState: msg.detectedState ? JSON.stringify(msg.detectedState) : null,
+        detectedState: JSON.stringify({
+          __v: 2,
+          createdAt: msg.createdAt,
+          detectedState: msg.detectedState || null,
+          desgloseReporte: m.desgloseReporte || null,
+          tacticalAnalysis: m.tacticalAnalysis || null,
+          desgloseResumenSesion: m.desgloseResumenSesion || null,
+        }),
         energyLevel: msg.energyLevel || 0,
       }),
     });
@@ -401,20 +442,10 @@ const META_PREFIX = "[[META_V3:";
 const META_SUFFIX = "]]\n";
 
 function serializarLogParaPB(log: DailyLog): string {
-  const meta = {
-    horaExacta: log.horaExacta,
-    franja: log.franja,
-    moodScore: log.moodScore,
-    productivityScore: log.productivityScore,
-    tipoReporte: log.tipoReporte,
-    objetivoId: log.objetivoId,
-    rasgoCodigo: log.rasgoCodigo,
-    huboObstaculo: log.huboObstaculo,
-    detonante: log.detonante,
-    metodoAplicado: log.metodoAplicado,
-    resultadoMetodo: log.resultadoMetodo,
-  };
-  return `${META_PREFIX}${JSON.stringify(meta)}${META_SUFFIX}${log.note || ""}`;
+  // Se guarda el registro COMPLETO (desglose de las 3 variables, tiempos, emociones,
+  // métodos, fecha/hora original) para que la Base de Datos sea la única fuente de verdad.
+  const { note, ...meta } = log as any;
+  return `${META_PREFIX}${JSON.stringify(meta)}${META_SUFFIX}${note || ""}`;
 }
 
 function deserializarLogDesdePB(item: any): DailyLog {
@@ -435,40 +466,59 @@ function deserializarLogDesdePB(item: any): DailyLog {
     }
   }
 
+  const pbCreated = item.created ? String(item.created).replace(" ", "T") : new Date().toISOString();
   return {
     id: item.logId || item.id,
     energy: Number(item.energy) || 5,
     motivation: Number(item.motivation) || 5,
     stress: Number(item.stress) || 5,
     note: cleanNote,
-    createdAt: item.created || new Date().toISOString(),
+    createdAt: pbCreated,
     ...parsedMeta,
   };
 }
 
-export async function fetchRegistrosPB(limitDays = 14): Promise<DailyLog[]> {
+/**
+ * Lee TODOS los registros diarios desde la Base de Datos (paginado).
+ * Devuelve null si la Base de Datos no respondió (para no confundir "sin datos" con "error de red").
+ */
+export async function fetchRegistrosPBEstricto(): Promise<DailyLog[] | null> {
   try {
-    const fechaDesde = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .replace("T", " ");
-    const res = await fetch(
-      `${POCKETBASE_URL}/api/collections/mentealfa_registros/records?sort=-created&perPage=200&filter=(created>='${encodeURIComponent(fechaDesde)}')`,
-      {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      }
-    );
-
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.items || []).map(deserializarLogDesdePB);
+    const todos: DailyLog[] = [];
+    let page = 1;
+    let totalPages = 1;
+    do {
+      const res = await fetch(
+        `${POCKETBASE_URL}/api/collections/mentealfa_registros/records?sort=-created&perPage=500&page=${page}`,
+        { method: "GET", headers: { "Content-Type": "application/json" } }
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      (data.items || []).forEach((it: any) => todos.push(deserializarLogDesdePB(it)));
+      totalPages = data.totalPages || 1;
+      page++;
+    } while (page <= totalPages && page <= 20);
+    return todos;
   } catch (error) {
     console.warn("[PocketBase] Error al cargar registros diarios:", error);
-    return [];
+    return null;
   }
 }
 
+export async function fetchRegistrosPB(_limitDays = 14): Promise<DailyLog[]> {
+  return (await fetchRegistrosPBEstricto()) || [];
+}
+
 export async function createRegistroPB(log: DailyLog): Promise<{ success: boolean; id?: string }> {
+  for (let intento = 1; intento <= 3; intento++) {
+    const r = await createRegistroPBUnaVez(log);
+    if (r.success) return r;
+    await new Promise((res) => setTimeout(res, 600 * intento));
+  }
+  return { success: false };
+}
+
+async function createRegistroPBUnaVez(log: DailyLog): Promise<{ success: boolean; id?: string }> {
   try {
     const res = await fetch(`${POCKETBASE_URL}/api/collections/mentealfa_registros/records`, {
       method: "POST",
